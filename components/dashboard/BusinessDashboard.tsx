@@ -6,52 +6,58 @@ import { FaChartLine, FaUser, FaChartBar, FaChartPie, FaUsers, FaClock, FaMoneyB
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
-import Survey, { mockQuestions } from './Survey';
+import Survey from './Survey';
 import IncentivesBoard from './IncentivesBoard';
 import BackgroundAnimation from '@/components/ui/BackgroundAnimation';
 import Link from 'next/link';
+import CreateSurveyModal from './CreateSurveyModal';
+import { useTransportationData } from '@/hooks/useTransportationData';
+import TransportationSection from '@/components/business/TransportationSection';
+import { useAitriosData } from '@/hooks/useAitriosData';
+import { ResponsiveLine } from '@nivo/line';
+import { toast } from 'react-hot-toast';
 
-type BusinessData = {
+interface AitriosStats {
+  currentOccupancy: number;
+  maxCapacity: number;
+  occupancyPercentage: number;
+  status: 'normal' | 'warning' | 'critical';
+  lastUpdate: string;
+  history: Array<{
+    timestamp: string;
+    occupancy: number;
+  }>;
+}
+
+interface BusinessData {
   name: string;
   description: string;
+  category: string;
   address: string;
   phone: string;
   email: string;
-  website: string;
-  category: string;
-  openingHours: string;
-  capacity: number;
+  imageUrl: string;
   currentOccupancy: number;
-  peakOccupancy: number;
-  averageOccupancy: number;
-  totalVisitors: number;
-  revenue: number;
-  surveyResults: Record<string, any>;
-  subscriptionTier: 'basic' | 'premium' | 'enterprise';
-  surveyLimit: number;
-  surveysCreated: number;
-  incentives: {
+  maxCapacity: number;
+  occupancyPercentage: number;
+  status: 'normal' | 'warning' | 'critical';
+  activeSurvey: {
+    questions: Question[];
+    status: 'active' | 'closed';
+    createdAt: string;
+    responses: SurveyResponse[];
+  };
+  surveyResults: SurveyStats | null;
+  incentives: Array<{
     id: string;
     title: string;
     description: string;
     points: number;
-    active: boolean;
-  }[];
-  aitriosData: {
-    deviceId: string;
-    lastUpdated: string;
-    status: 'active' | 'inactive' | 'maintenance';
-    metrics: {
-      totalCount: number;
-      averageCount: number;
-      peakCount: number;
-      occupancyRate: number;
-      dwellTime: number;
-    };
-  };
-};
+    status: 'active' | 'inactive';
+  }>;
+}
 
-type UserData = {
+interface UserData {
   uid: string;
   displayName: string | null;
   email: string | null;
@@ -67,35 +73,41 @@ type UserData = {
     };
   };
   points?: number;
-};
+}
 
-type SurveyResponse = {
+interface SurveyAnswer {
+  questionId: string;
+  value: string | number;
+}
+
+interface SurveyResponse {
   userId: string;
-  answers: Array<{
-    questionId: string;
-    value: string | number;
-  }>;
-  completedAt: string;
-  incentiveId: string;
-};
+  answers: SurveyAnswer[];
+  timestamp: string;
+}
 
-type SurveyStats = {
+interface SurveyStats {
   totalResponses: number;
   averageRating: number;
-  questionStats: {
-    [questionId: string]: {
-      average?: number;
-      distribution?: {
-        [value: string]: number;
-      };
-    };
-  };
-};
+  questionStats: Record<string, {
+    average: number;
+    total: number;
+    distribution?: Record<string, number>;
+  }>;
+}
+
+interface Question {
+  id: string;
+  text: string;
+  type: 'rating' | 'multiple-choice' | 'text';
+  options: string[];
+  required?: boolean;
+}
 
 const BusinessDashboard = () => {
   console.log('BusinessDashboard component rendered with user type:', useAuth().currentUser?.userType);
   const { currentUser, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState<'analytics' | 'profile' | 'surveys' | 'incentives' | 'users'>('analytics');
+  const [activeTab, setActiveTab] = useState<'overview' | 'surveys' | 'users' | 'incentives'>('overview');
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [businessData, setBusinessData] = useState<BusinessData | null>(null);
@@ -111,6 +123,11 @@ const BusinessDashboard = () => {
     averageRating: 0,
     questionStats: {}
   });
+  const [createSurveyModalOpen, setCreateSurveyModalOpen] = useState(false);
+  const [hasActiveSurvey, setHasActiveSurvey] = useState(false);
+
+  // Add Aitrios data hook
+  const { stats: aitriosStats, loading: aitriosLoading } = useAitriosData(currentUser?.uid || '');
 
   // Mock analytics data
   const mockAnalytics = {
@@ -187,6 +204,7 @@ const BusinessDashboard = () => {
           const data = businessDoc.data() as BusinessData;
           setBusinessData(data);
           setFormData(data);
+          setHasActiveSurvey(!!data.activeSurvey);
         }
       } catch (error) {
         console.error('Error fetching business data:', error);
@@ -251,7 +269,8 @@ const BusinessDashboard = () => {
           if (surveyData) {
             responses.push({
               userId: doc.id,
-              ...surveyData
+              answers: surveyData.answers,
+              timestamp: surveyData.completedAt
             });
           }
         });
@@ -259,51 +278,7 @@ const BusinessDashboard = () => {
         setSurveyResponses(responses);
 
         // Calculate statistics
-        const stats: SurveyStats = {
-          totalResponses: responses.length,
-          averageRating: 0,
-          questionStats: {}
-        };
-
-        // Calculate average rating and question statistics
-        responses.forEach(response => {
-          response.answers.forEach(answer => {
-            if (!stats.questionStats[answer.questionId]) {
-              stats.questionStats[answer.questionId] = {};
-            }
-
-            if (typeof answer.value === 'number') {
-              // For rating questions
-              if (!stats.questionStats[answer.questionId].average) {
-                stats.questionStats[answer.questionId].average = 0;
-              }
-              stats.questionStats[answer.questionId].average! += answer.value;
-            } else {
-              // For multiple choice questions
-              if (!stats.questionStats[answer.questionId].distribution) {
-                stats.questionStats[answer.questionId].distribution = {};
-              }
-              const distribution = stats.questionStats[answer.questionId].distribution!;
-              distribution[answer.value] = (distribution[answer.value] || 0) + 1;
-            }
-          });
-        });
-
-        // Calculate averages
-        Object.keys(stats.questionStats).forEach(questionId => {
-          const question = mockQuestions.find(q => q.id === questionId);
-          if (question?.type === 'rating' && stats.questionStats[questionId].average) {
-            stats.questionStats[questionId].average! /= responses.length;
-          }
-        });
-
-        // Calculate overall average rating
-        const ratingAnswers = responses.flatMap(r => 
-          r.answers.filter(a => mockQuestions.find(q => q.id === a.questionId)?.type === 'rating')
-        );
-        if (ratingAnswers.length > 0) {
-          stats.averageRating = ratingAnswers.reduce((sum, a) => sum + (a.value as number), 0) / ratingAnswers.length;
-        }
+        const stats = processSurveyResponses(responses);
 
         setSurveyStats(stats);
       } catch (error) {
@@ -315,6 +290,18 @@ const BusinessDashboard = () => {
       fetchSurveyResponses();
     }
   }, [currentUser, activeTab]);
+
+  useEffect(() => {
+    if (aitriosStats && businessData) {
+      setBusinessData({
+        ...businessData,
+        currentOccupancy: aitriosStats.currentOccupancy,
+        maxCapacity: aitriosStats.maxCapacity,
+        occupancyPercentage: aitriosStats.occupancyPercentage,
+        status: aitriosStats.status
+      });
+    }
+  }, [aitriosStats, businessData]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -358,6 +345,177 @@ const BusinessDashboard = () => {
     return 'text-green-400';
   };
 
+  const handleQuestionChange = (questionId: string, field: keyof Question, value: string) => {
+    if (!businessData?.activeSurvey) return;
+    
+    const updatedQuestions = businessData.activeSurvey.questions.map(q => 
+      q.id === questionId ? { ...q, [field]: value } : q
+    );
+    
+    setBusinessData(prev => prev ? {
+      ...prev,
+      activeSurvey: {
+        ...prev.activeSurvey,
+        questions: updatedQuestions
+      }
+    } : null);
+  };
+
+  const handleOptionChange = (questionId: string, optionIndex: number, value: string) => {
+    if (!businessData?.activeSurvey) return;
+    
+    const updatedQuestions = businessData.activeSurvey.questions.map(q => {
+      if (q.id === questionId && q.options) {
+        const newOptions = [...q.options];
+        newOptions[optionIndex] = value;
+        return { ...q, options: newOptions };
+      }
+      return q;
+    });
+    
+    setBusinessData(prev => prev ? {
+      ...prev,
+      activeSurvey: {
+        ...prev.activeSurvey,
+        questions: updatedQuestions
+      }
+    } : null);
+  };
+
+  const processSurveyResponses = (responses: SurveyResponse[]): SurveyStats => {
+    const stats: SurveyStats = {
+      totalResponses: responses.length,
+      averageRating: 0,
+      questionStats: {}
+    };
+    
+    if (responses.length === 0) return stats;
+    
+    responses.forEach(response => {
+      response.answers.forEach(answer => {
+        if (!stats.questionStats[answer.questionId]) {
+          stats.questionStats[answer.questionId] = {
+            average: 0,
+            total: 0,
+            distribution: {}
+          };
+        }
+        
+        const stat = stats.questionStats[answer.questionId];
+        const numericValue = typeof answer.value === 'number' 
+          ? answer.value 
+          : parseFloat(answer.value);
+        
+        if (!isNaN(numericValue)) {
+          stat.average += numericValue;
+          stat.total += 1;
+          
+          if (!stat.distribution) stat.distribution = {};
+          const valueKey = numericValue.toString();
+          stat.distribution[valueKey] = (stat.distribution[valueKey] || 0) + 1;
+        }
+      });
+    });
+    
+    // Calculate final averages
+    Object.keys(stats.questionStats).forEach(questionId => {
+      const stat = stats.questionStats[questionId];
+      if (stat.total > 0) {
+        stat.average = stat.average / stat.total;
+      }
+    });
+    
+    // Calculate overall average rating
+    const numericAnswers = responses.flatMap(r => 
+      r.answers
+        .map(a => typeof a.value === 'number' ? a.value : parseFloat(a.value))
+        .filter(value => !isNaN(value))
+    );
+    
+    if (numericAnswers.length > 0) {
+      stats.averageRating = numericAnswers.reduce((sum, val) => sum + val, 0) / numericAnswers.length;
+    }
+    
+    return stats;
+  };
+
+  const handleCreateSurvey = async () => {
+    if (!currentUser || !businessData) return;
+    
+    try {
+      const surveyRef = doc(db, 'businesses', currentUser.uid);
+      const newSurvey: BusinessData['activeSurvey'] = {
+        questions: businessData.activeSurvey?.questions.map((q, index) => ({
+          ...q,
+          id: `q${index + 1}`,
+          type: 'rating' as const,
+          options: []
+        })),
+        status: 'active',
+        createdAt: new Date().toISOString(),
+        responses: []
+      };
+      
+      await updateDoc(surveyRef, { activeSurvey: newSurvey });
+      
+      setBusinessData(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          activeSurvey: newSurvey,
+          surveyResults: null
+        } as BusinessData;
+      });
+      
+      setCreateSurveyModalOpen(false);
+      
+      toast.success('Survey created successfully!');
+    } catch (error) {
+      console.error('Error creating survey:', error);
+      toast.error('Failed to create survey. Please try again.');
+    }
+  };
+
+  const handleSurveySubmission = async (answers: Array<{
+    questionId: string;
+    value: string | number;
+  }>) => {
+    if (!currentUser || !businessData?.activeSurvey) return;
+
+    try {
+      const surveyRef = doc(db, 'businesses', currentUser.uid);
+      const newResponse: SurveyResponse = {
+        userId: currentUser.uid,
+        answers: answers.map(answer => ({
+          questionId: answer.questionId,
+          value: answer.value
+        })),
+        timestamp: new Date().toISOString()
+      };
+
+      const updatedResponses = [...businessData.activeSurvey.responses, newResponse];
+      await updateDoc(surveyRef, {
+        'activeSurvey.responses': updatedResponses
+      });
+
+      setBusinessData(prev => {
+        if (!prev?.activeSurvey) return prev;
+        return {
+          ...prev,
+          activeSurvey: {
+            ...prev.activeSurvey,
+            responses: updatedResponses
+          }
+        };
+      });
+
+      toast.success('Survey submitted successfully!');
+    } catch (error) {
+      console.error('Error submitting survey:', error);
+      toast.error('Failed to submit survey. Please try again.');
+    }
+  };
+
   if (!businessData) return null;
 
   return (
@@ -372,6 +530,15 @@ const BusinessDashboard = () => {
               </Link>
             </div>
             <div className="flex items-center space-x-4">
+              <Link href="/dashboard" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
+                Dashboard
+              </Link>
+              <Link href="/profile" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
+                Profile
+              </Link>
+              <Link href="/settings" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
+                Settings
+              </Link>
               <button
                 onClick={handleSignOut}
                 className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
@@ -404,20 +571,11 @@ const BusinessDashboard = () => {
               <motion.button 
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => setSurveyModalOpen(true)}
+                onClick={() => setCreateSurveyModalOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-pink-500/50 hover:bg-pink-500/70 rounded-lg text-white font-medium transition-colors"
               >
                 <FaPoll />
                 Create Survey
-              </motion.button>
-              <motion.button 
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setIncentiveModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-500/50 hover:bg-blue-500/70 rounded-lg text-white font-medium transition-colors"
-              >
-                <FaGift />
-                Manage Incentives
               </motion.button>
             </div>
           </div>
@@ -432,13 +590,13 @@ const BusinessDashboard = () => {
         >
           <div className="flex space-x-4">
             <button
-              onClick={() => setActiveTab('analytics')}
+              onClick={() => setActiveTab('overview')}
               className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
-                activeTab === 'analytics' ? 'bg-pink-500/50 text-white' : 'text-white/70 hover:bg-white/10'
+                activeTab === 'overview' ? 'bg-pink-500/50 text-white' : 'text-white/70 hover:bg-white/10'
               }`}
             >
               <FaChartLine />
-              <span>Analytics</span>
+              <span>Overview</span>
             </button>
             <button
               onClick={() => setActiveTab('surveys')}
@@ -450,24 +608,6 @@ const BusinessDashboard = () => {
               <span>Surveys</span>
             </button>
             <button
-              onClick={() => setActiveTab('incentives')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
-                activeTab === 'incentives' ? 'bg-pink-500/50 text-white' : 'text-white/70 hover:bg-white/10'
-              }`}
-            >
-              <FaGift />
-              <span>Incentives</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('profile')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
-                activeTab === 'profile' ? 'bg-pink-500/50 text-white' : 'text-white/70 hover:bg-white/10'
-              }`}
-            >
-              <FaUser />
-              <span>Profile</span>
-            </button>
-            <button
               onClick={() => setActiveTab('users')}
               className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
                 activeTab === 'users' ? 'bg-pink-500/50 text-white' : 'text-white/70 hover:bg-white/10'
@@ -475,6 +615,15 @@ const BusinessDashboard = () => {
             >
               <FaUsers />
               <span>Users</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('incentives')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
+                activeTab === 'incentives' ? 'bg-pink-500/50 text-white' : 'text-white/70 hover:bg-white/10'
+              }`}
+            >
+              <FaGift />
+              <span>Incentives</span>
             </button>
           </div>
         </motion.div>
@@ -491,8 +640,8 @@ const BusinessDashboard = () => {
             </div>
           ) : (
             <>
-              {/* Analytics Tab */}
-              {activeTab === 'analytics' && (
+              {/* Overview Tab */}
+              {activeTab === 'overview' && (
                 <div className="space-y-8">
                   {/* Aitrios Device Status */}
                   <motion.div 
@@ -509,45 +658,36 @@ const BusinessDashboard = () => {
                         </p>
                       </div>
                       <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                        businessData.aitriosData.status === 'active'
+                        businessData.status === 'normal'
                           ? 'bg-green-500/20 text-green-400'
-                          : businessData.aitriosData.status === 'maintenance'
+                          : businessData.status === 'warning'
                           ? 'bg-yellow-500/20 text-yellow-400'
                           : 'bg-red-500/20 text-red-400'
                       }`}>
-                        {businessData.aitriosData.status.charAt(0).toUpperCase() + businessData.aitriosData.status.slice(1)}
+                        {businessData.status ? businessData.status.charAt(0).toUpperCase() + businessData.status.slice(1) : 'Unknown'}
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       <div className="bg-black/30 border border-white/10 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-white/70">Device ID</span>
-                          <FaChartBar className="text-pink-400" />
-                        </div>
-                        <p className="text-white font-medium">{businessData.aitriosData.deviceId}</p>
-                      </div>
-                      <div className="bg-black/30 border border-white/10 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-white/70">Last Updated</span>
-                          <FaClock className="text-pink-400" />
-                        </div>
-                        <p className="text-white font-medium">
-                          {new Date(businessData.aitriosData.lastUpdated).toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="bg-black/30 border border-white/10 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-white/70">Current Count</span>
+                          <span className="text-white/70">Current Occupancy</span>
                           <FaUsers className="text-pink-400" />
                         </div>
-                        <p className="text-white font-medium">{businessData.aitriosData.metrics.totalCount}</p>
+                        <p className="text-white font-medium">{aitriosStats.currentOccupancy}</p>
                       </div>
                       <div className="bg-black/30 border border-white/10 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-white/70">Dwell Time</span>
-                          <FaClock className="text-pink-400" />
+                          <span className="text-white/70">Max Capacity</span>
+                          <FaUsers className="text-pink-400" />
                         </div>
-                        <p className="text-white font-medium">{businessData.aitriosData.metrics.dwellTime} min</p>
+                        <p className="text-white font-medium">{aitriosStats.maxCapacity}</p>
+                      </div>
+                      <div className="bg-black/30 border border-white/10 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-white/70">Occupancy Percentage</span>
+                          <FaChartPie className="text-pink-400" />
+                        </div>
+                        <p className="text-white font-medium">{aitriosStats.occupancyPercentage}%</p>
                       </div>
                     </div>
                   </motion.div>
@@ -621,6 +761,140 @@ const BusinessDashboard = () => {
                         <span className="text-white/50">vs. yesterday</span>
                         <span className="ml-2 text-green-400">↑ 8.3%</span>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Occupancy Section */}
+                  <motion.div 
+                    className="bg-white/5 border border-white/10 rounded-xl p-6"
+                    animate={{ opacity: 1 }}
+                    initial={{ opacity: 0.8 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <h3 className="text-lg font-semibold mb-4 text-white">Current Occupancy</h3>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <motion.p 
+                            className="text-3xl font-bold text-white"
+                            animate={{ scale: [1, 1.1, 1] }}
+                            transition={{ duration: 0.3 }}
+                          >
+                            {aitriosStats.currentOccupancy}
+                          </motion.p>
+                          <p className="text-sm text-white/70">Current Occupancy</p>
+                        </div>
+                        <div>
+                          <p className="text-3xl font-bold text-white">{aitriosStats.maxCapacity}</p>
+                          <p className="text-sm text-white/70">Max Capacity</p>
+                        </div>
+                      </div>
+                      
+                      <div className="relative pt-1">
+                        <div className="flex mb-2 items-center justify-between">
+                          <div>
+                            <motion.span 
+                              className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-blue-600 bg-blue-200"
+                              animate={{ scale: [1, 1.1, 1] }}
+                              transition={{ duration: 0.3 }}
+                            >
+                              {aitriosStats.occupancyPercentage}% Occupied
+                            </motion.span>
+                          </div>
+                          <div className="text-right">
+                            <motion.span 
+                              className={`text-xs font-semibold inline-block ${
+                                aitriosStats.status === 'normal' ? 'text-green-600' :
+                                aitriosStats.status === 'warning' ? 'text-yellow-600' : 'text-red-600'
+                              }`}
+                              animate={{ scale: [1, 1.1, 1] }}
+                              transition={{ duration: 0.3 }}
+                            >
+                              {aitriosStats.status === 'normal' ? 'Normal' : 
+                               aitriosStats.status === 'warning' ? 'Warning' : 'Critical'}
+                            </motion.span>
+                          </div>
+                        </div>
+                        <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-blue-200">
+                          <motion.div
+                            style={{ width: `${aitriosStats.occupancyPercentage}%` }}
+                            className={`shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center ${
+                              aitriosStats.status === 'normal' ? 'bg-green-500' :
+                              aitriosStats.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
+                            }`}
+                            animate={{ width: `${aitriosStats.occupancyPercentage}%` }}
+                            transition={{ duration: 0.5, ease: "easeOut" }}
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="text-sm text-white/70">
+                        Last updated: {aitriosStats.lastUpdate}
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  {/* Occupancy History Chart */}
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-6">
+                    <h3 className="text-lg font-semibold mb-4 text-white">Occupancy History</h3>
+                    <div className="h-64">
+                      <ResponsiveLine
+                        data={[
+                          {
+                            id: 'occupancy',
+                            data: aitriosStats.history.map((item, index) => ({
+                              x: index,
+                              y: item.occupancy
+                            }))
+                          }
+                        ]}
+                        margin={{ top: 20, right: 20, bottom: 40, left: 40 }}
+                        xScale={{ type: 'linear' }}
+                        yScale={{ type: 'linear', min: 0, max: aitriosStats.maxCapacity }}
+                        axisTop={null}
+                        axisRight={null}
+                        axisBottom={{
+                          tickSize: 5,
+                          tickPadding: 5,
+                          tickRotation: 0,
+                          legend: 'Time',
+                          legendOffset: 36,
+                          legendPosition: 'middle'
+                        }}
+                        axisLeft={{
+                          tickSize: 5,
+                          tickPadding: 5,
+                          tickRotation: 0,
+                          legend: 'Occupancy',
+                          legendOffset: -40,
+                          legendPosition: 'middle'
+                        }}
+                        pointSize={10}
+                        pointColor={{ theme: 'background' }}
+                        pointBorderWidth={2}
+                        pointBorderColor={{ from: 'serieColor' }}
+                        pointLabelYOffset={-12}
+                        useMesh={true}
+                        theme={{
+                          axis: {
+                            ticks: {
+                              text: {
+                                fill: 'rgba(255, 255, 255, 0.7)'
+                              }
+                            },
+                            legend: {
+                              text: {
+                                fill: 'rgba(255, 255, 255, 0.7)'
+                              }
+                            }
+                          },
+                          grid: {
+                            line: {
+                              stroke: 'rgba(255, 255, 255, 0.1)'
+                            }
+                          }
+                        }}
+                      />
                     </div>
                   </div>
 
@@ -748,7 +1022,7 @@ const BusinessDashboard = () => {
                     </div>
 
                     <div className="space-y-6">
-                      {mockQuestions.map(question => {
+                      {businessData?.activeSurvey?.questions.map((question: Question) => {
                         const stats = surveyStats.questionStats[question.id];
                         if (!stats) return null;
 
@@ -764,16 +1038,24 @@ const BusinessDashboard = () => {
                                     <span className="text-white">{stats.average.toFixed(1)}</span>
                                   </div>
                                   <div className="flex items-center">
-                                    {Array.from({ length: 5 }).map((_, i) => (
-                                      <FaStar
-                                        key={i}
-                                        className={`mr-1 ${
-                                          i < Math.round(stats.average!)
-                                            ? 'text-yellow-400'
-                                            : 'text-white/20'
-                                        }`}
-                                      />
-                                    ))}
+                                    {Array.from({ length: 5 }).map((_, i) => {
+                                      let ratingValue = 0;
+                                      if (typeof stats.average === 'number') {
+                                        ratingValue = stats.average;
+                                      } else if (stats.average !== undefined && stats.average !== null) {
+                                        const parsed = Number(stats.average);
+                                        ratingValue = isNaN(parsed) ? 0 : parsed;
+                                      }
+                                      
+                                      return (
+                                        <FaStar
+                                          key={i}
+                                          className={`mr-1 ${
+                                            i < ratingValue ? 'text-yellow-400' : 'text-white/20'
+                                          }`}
+                                        />
+                                      );
+                                    })}
                                   </div>
                                 </div>
                                 <div className="w-full bg-white/10 rounded-full h-2">
@@ -811,91 +1093,22 @@ const BusinessDashboard = () => {
                               <div className="space-y-3">
                                 {surveyResponses
                                   .filter(r => r.answers.some(a => a.questionId === question.id))
-                                  .map((response, index) => (
-                                    <div key={index} className="bg-white/5 rounded-lg p-3">
-                                      <p className="text-white">
-                                        {response.answers.find(a => a.questionId === question.id)?.value}
-                                      </p>
-                                      <p className="text-white/50 text-sm mt-1">
-                                        {new Date(response.completedAt).toLocaleDateString()}
-                                      </p>
-                                    </div>
-                                  ))}
+                                  .map((response, index) => {
+                                    const answer = response.answers.find(a => a.questionId === question.id);
+                                    return (
+                                      <div key={index} className="bg-white/5 rounded-lg p-3">
+                                        <p className="text-white">{answer ? String(answer.value) : ''}</p>
+                                        <p className="text-white/50 text-sm mt-1">
+                                          {new Date(response.timestamp).toLocaleDateString()}
+                                        </p>
+                                      </div>
+                                    );
+                                  })}
                               </div>
                             )}
                           </div>
                         );
                       })}
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-
-              {/* Incentives Tab */}
-              {activeTab === 'incentives' && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5 }}
-                  className="space-y-8"
-                >
-                  <div className="bg-white/5 border border-white/10 rounded-xl p-6">
-                    <div className="flex justify-between items-start mb-6">
-                      <div>
-                        <h2 className="text-xl font-bold text-white">Incentive Management</h2>
-                        <p className="text-white/70 mt-1">
-                          Create and manage customer incentives
-                        </p>
-                      </div>
-                      <button 
-                        onClick={() => setIncentiveModalOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg text-white font-medium hover:opacity-90 transition-opacity"
-                      >
-                        <FaGift />
-                        Create New Incentive
-                      </button>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {businessData.incentives && businessData.incentives.length > 0 ? (
-                        businessData.incentives.map(incentive => (
-                          <div key={incentive.id} className="bg-black/30 border border-white/10 rounded-lg p-4">
-                            <div className="flex justify-between items-start mb-4">
-                              <div>
-                                <h3 className="text-lg font-medium text-white">{incentive.title}</h3>
-                                <p className="text-white/70 text-sm mt-1">{incentive.description}</p>
-                              </div>
-                              <div className={`px-2 py-1 rounded text-xs ${
-                                incentive.active 
-                                  ? 'bg-green-500/20 text-green-400' 
-                                  : 'bg-red-500/20 text-red-400'
-                              }`}>
-                                {incentive.active ? 'Active' : 'Inactive'}
-                              </div>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <div className="flex items-center">
-                                <FaGift className="text-cyan-400 mr-1" />
-                                <span className="text-white">{incentive.points} points</span>
-                              </div>
-                              <button className="text-white/70 hover:text-white transition-colors">
-                                <FaCog />
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="col-span-full text-center py-6 text-white/50">
-                          <FaGift className="mx-auto text-3xl mb-2" />
-                          <p>No incentives created yet</p>
-                          <button 
-                            onClick={() => setIncentiveModalOpen(true)}
-                            className="mt-3 px-4 py-2 bg-white/10 rounded-lg text-white hover:bg-white/20 transition-colors"
-                          >
-                            Create Your First Incentive
-                          </button>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -952,7 +1165,7 @@ const BusinessDashboard = () => {
                                 <h4 className="text-white font-medium">Survey Responses</h4>
                                 <div className="grid gap-4">
                                   {user.surveyAnswers[currentUser?.uid || ''].answers.map((answer, index) => {
-                                    const question = mockQuestions.find((q: { id: string }) => q.id === answer.questionId);
+                                    const question = businessData?.activeSurvey?.questions.find((q: Question) => q.id === answer.questionId);
                                     if (!question) return null;
 
                                     return (
@@ -961,19 +1174,27 @@ const BusinessDashboard = () => {
                                         <div className="flex items-center">
                                           {question.type === 'rating' ? (
                                             <div className="flex items-center">
-                                              {Array.from({ length: 5 }).map((_, i) => (
-                                                <FaStar
-                                                  key={i}
-                                                  className={`mr-1 ${
-                                                    i < (answer.value as number)
-                                                      ? 'text-yellow-400'
-                                                      : 'text-white/20'
-                                                  }`}
-                                                />
-                                              ))}
+                                              {Array.from({ length: 5 }).map((_, i) => {
+                                                let ratingValue = 0;
+                                                if (typeof answer.value === 'number') {
+                                                  ratingValue = answer.value;
+                                                } else if (answer.value !== undefined && answer.value !== null) {
+                                                  const parsed = Number(answer.value);
+                                                  ratingValue = isNaN(parsed) ? 0 : parsed;
+                                                }
+                                                
+                                                return (
+                                                  <FaStar
+                                                    key={i}
+                                                    className={`mr-1 ${
+                                                      i < ratingValue ? 'text-yellow-400' : 'text-white/20'
+                                                    }`}
+                                                  />
+                                                );
+                                              })}
                                             </div>
                                           ) : (
-                                            <p className="text-white">{answer.value}</p>
+                                            <p className="text-white">{String(answer.value)}</p>
                                           )}
                                         </div>
                                       </div>
@@ -1002,136 +1223,72 @@ const BusinessDashboard = () => {
                 </motion.div>
               )}
 
-              {/* Profile Tab */}
-              {activeTab === 'profile' && (
+              {/* Incentives Tab */}
+              {activeTab === 'incentives' && (
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5 }}
-                  className="max-w-2xl"
+                  className="space-y-8"
                 >
                   <div className="bg-white/5 border border-white/10 rounded-xl p-6">
                     <div className="flex justify-between items-start mb-6">
                       <div>
-                        <h2 className="text-xl font-bold text-white">Business Profile</h2>
+                        <h2 className="text-xl font-bold text-white">Incentive Management</h2>
                         <p className="text-white/70 mt-1">
-                          Manage your business information
+                          Create and manage customer incentives
                         </p>
                       </div>
-                      <button
-                        onClick={() => setEditing(!editing)}
-                        className="px-4 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg-white/20"
+                      <button 
+                        onClick={() => setIncentiveModalOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg text-white font-medium hover:opacity-90 transition-opacity"
                       >
-                        {editing ? 'Cancel' : 'Edit Profile'}
+                        <FaGift />
+                        Create New Incentive
                       </button>
                     </div>
-
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                      <div>
-                        <label className="block text-white/70 text-sm mb-1">Business Name</label>
-                        <input
-                          type="text"
-                          name="name"
-                          value={formData.name || ''}
-                          onChange={handleInputChange}
-                          disabled={!editing}
-                          className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-white/70 text-sm mb-1">Description</label>
-                        <textarea
-                          name="description"
-                          value={formData.description || ''}
-                          onChange={handleInputChange}
-                          disabled={!editing}
-                          rows={3}
-                          className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                        />
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-white/70 text-sm mb-1">Address</label>
-                          <input
-                            type="text"
-                            name="address"
-                            value={formData.address || ''}
-                            onChange={handleInputChange}
-                            disabled={!editing}
-                            className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-white/70 text-sm mb-1">Phone</label>
-                          <input
-                            type="tel"
-                            name="phone"
-                            value={formData.phone || ''}
-                            onChange={handleInputChange}
-                            disabled={!editing}
-                            className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-white/70 text-sm mb-1">Email</label>
-                          <input
-                            type="email"
-                            name="email"
-                            value={formData.email || ''}
-                            onChange={handleInputChange}
-                            disabled={!editing}
-                            className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-white/70 text-sm mb-1">Website</label>
-                          <input
-                            type="url"
-                            name="website"
-                            value={formData.website || ''}
-                            onChange={handleInputChange}
-                            disabled={!editing}
-                            className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-white/70 text-sm mb-1">Category</label>
-                          <input
-                            type="text"
-                            name="category"
-                            value={formData.category || ''}
-                            onChange={handleInputChange}
-                            disabled={!editing}
-                            className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-white/70 text-sm mb-1">Opening Hours</label>
-                          <input
-                            type="text"
-                            name="openingHours"
-                            value={formData.openingHours || ''}
-                            onChange={handleInputChange}
-                            disabled={!editing}
-                            className="w-full px-4 py-2 bg-black/30 border border-white/10 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-transparent disabled:opacity-50"
-                          />
-                        </div>
-                      </div>
-                      {editing && (
-                        <div className="flex justify-end">
-                          <button
-                            type="submit"
-                            className="px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-r from-pink-500 to-purple-500 text-white hover:opacity-90"
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {businessData.incentives && businessData.incentives.length > 0 ? (
+                        businessData.incentives.map(incentive => (
+                          <div key={incentive.id} className="bg-black/30 border border-white/10 rounded-lg p-4">
+                            <div className="flex justify-between items-start mb-4">
+                              <div>
+                                <h3 className="text-lg font-medium text-white">{incentive.title}</h3>
+                                <p className="text-white/70 text-sm mt-1">{incentive.description}</p>
+                              </div>
+                              <div className={`px-2 py-1 rounded text-xs ${
+                                incentive.status === 'active' 
+                                  ? 'bg-green-500/20 text-green-400' 
+                                  : 'bg-red-500/20 text-red-400'
+                              }`}>
+                                {incentive.status === 'active' ? 'Active' : 'Inactive'}
+                              </div>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <div className="flex items-center">
+                                <FaGift className="text-cyan-400 mr-1" />
+                                <span className="text-white">{incentive.points} points</span>
+                              </div>
+                              <button className="text-white/70 hover:text-white transition-colors">
+                                <FaCog />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="col-span-full text-center py-6 text-white/50">
+                          <FaGift className="mx-auto text-3xl mb-2" />
+                          <p>No incentives created yet</p>
+                          <button 
+                            onClick={() => setIncentiveModalOpen(true)}
+                            className="mt-3 px-4 py-2 bg-white/10 rounded-lg text-white hover:bg-white/20 transition-colors"
                           >
-                            Save Changes
+                            Create Your First Incentive
                           </button>
                         </div>
                       )}
-                    </form>
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -1192,6 +1349,14 @@ const BusinessDashboard = () => {
             <IncentivesBoard onClose={() => setIncentiveModalOpen(false)} />
           </motion.div>
         </div>
+      )}
+
+      {createSurveyModalOpen && (
+        <CreateSurveyModal
+          onClose={() => setCreateSurveyModalOpen(false)}
+          onSurveyCreated={handleCreateSurvey}
+          hasActiveSurvey={hasActiveSurvey}
+        />
       )}
     </div>
   );

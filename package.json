@@ -11,6 +11,7 @@
     "init-db": "ts-node --project scripts/tsconfig.json scripts/run-init-db.ts"
   },
   "dependencies": {
+    "@nivo/line": "^0.88.0",
     "@react-three/drei": "^9.105.4",
     "@react-three/fiber": "^8.16.2",
     "@sentry/nextjs": "^7.105.0",
@@ -28,6 +29,7 @@
     "next-themes": "^0.3.0",
     "react": "^18",
     "react-dom": "^18",
+    "react-hot-toast": "^2.5.2",
     "react-icons": "^5.0.1",
     "react-intersection-observer": "^9.16.0",
     "react-lottie": "^1.2.4",

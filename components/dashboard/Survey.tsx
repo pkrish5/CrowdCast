@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaTimes, FaStar, FaCheck } from 'react-icons/fa';
 import { useAuth } from '@/contexts/AuthContext';
-import { doc, updateDoc, arrayUnion, increment } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, increment } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 type QuestionType = 'rating' | 'text' | 'multiple-choice';
@@ -25,7 +25,6 @@ type Answer = {
 type SurveyProps = {
   businessId: string;
   businessName?: string;
-  onComplete: (points: number) => void;
   incentives?: {
     id: string;
     title: string;
@@ -33,50 +32,46 @@ type SurveyProps = {
     points: number;
     active: boolean;
   }[];
+  onComplete: (points: number) => void;
 };
 
-export const mockQuestions: Question[] = [
-  {
-    id: 'experience',
-    type: 'rating',
-    text: 'How would you rate your overall experience?',
-    required: true
-  },
-  {
-    id: 'crowd-level',
-    type: 'multiple-choice',
-    text: 'How crowded was the venue during your visit?',
-    options: ['Not crowded', 'Moderately crowded', 'Very crowded'],
-    required: true
-  },
-  {
-    id: 'wait-time',
-    type: 'multiple-choice',
-    text: 'How long did you wait?',
-    options: ['No wait', '5-15 minutes', '15-30 minutes', '30+ minutes'],
-    required: true
-  },
-  {
-    id: 'feedback',
-    type: 'text',
-    text: 'Do you have any additional feedback?',
-    required: false
-  }
-];
-
-const POINTS_PER_SURVEY = 50;
-
-const Survey = ({ businessId, businessName, onComplete, incentives = [] }: SurveyProps) => {
+const Survey = ({ businessId, businessName, incentives, onComplete }: SurveyProps) => {
   const { currentUser } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedIncentive, setSelectedIncentive] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const currentQuestion = mockQuestions[currentQuestionIndex];
-  const progress = ((currentQuestionIndex + 1) / mockQuestions.length) * 100;
+  useEffect(() => {
+    const fetchSurvey = async () => {
+      if (!currentUser) return;
+      
+      try {
+        setLoading(true);
+        const businessDoc = await getDoc(doc(db, 'businesses', businessId));
+        
+        if (businessDoc.exists()) {
+          const data = businessDoc.data();
+          if (data.activeSurvey?.status === 'active') {
+            setQuestions(data.activeSurvey.questions);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching survey:', error);
+        setError('Failed to load survey. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchSurvey();
+  }, [businessId, currentUser]);
+
+  const currentQuestion = questions[currentQuestionIndex];
+  const progress = questions.length > 0 ? ((currentQuestionIndex + 1) / questions.length) * 100 : 0;
 
   const handleAnswer = (value: string | number) => {
     setAnswers(prev => {
@@ -92,7 +87,7 @@ const Survey = ({ businessId, businessName, onComplete, incentives = [] }: Surve
       return [...prev, newAnswer];
     });
 
-    if (currentQuestionIndex < mockQuestions.length - 1) {
+    if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(prev => prev + 1);
     }
   };
@@ -102,32 +97,28 @@ const Survey = ({ businessId, businessName, onComplete, incentives = [] }: Surve
   };
 
   const canSubmit = () => {
-    return mockQuestions.every(q => 
+    return questions.every(q => 
       !q.required || answers.some(a => a.questionId === q.id)
     );
   };
 
   const handleSubmit = async () => {
-    if (!currentUser || !canSubmit() || !selectedIncentive) return;
+    if (!currentUser || !canSubmit()) return;
 
     setSubmitting(true);
     try {
-      const selectedIncentiveData = incentives.find(i => i.id === selectedIncentive);
-      if (!selectedIncentiveData) return;
-
       const userRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userRef, {
-        points: increment(selectedIncentiveData.points),
+        points: increment(50), // Default points for completing a survey
         completedSurveys: arrayUnion(businessId),
         [`surveyAnswers.${businessId}`]: {
           answers,
-          completedAt: new Date().toISOString(),
-          incentiveId: selectedIncentive
+          completedAt: new Date().toISOString()
         }
       });
 
       setIsOpen(false);
-      onComplete(selectedIncentiveData.points);
+      onComplete(50);
     } catch (error) {
       console.error('Error submitting survey:', error);
       setError('Failed to submit survey. Please try again.');
@@ -137,6 +128,26 @@ const Survey = ({ businessId, businessName, onComplete, incentives = [] }: Surve
   };
 
   const renderQuestion = () => {
+    if (loading) {
+      return (
+        <div className="flex justify-center items-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-pink-500"></div>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="text-red-400 text-center">
+          {error}
+        </div>
+      );
+    }
+
+    if (!currentQuestion) {
+      return null;
+    }
+
     const currentAnswer = getCurrentAnswer();
 
     switch (currentQuestion.type) {
@@ -193,40 +204,6 @@ const Survey = ({ businessId, businessName, onComplete, incentives = [] }: Surve
     }
   };
 
-  const renderIncentiveSelection = () => {
-    if (incentives.length === 0) return null;
-
-    return (
-      <div className="space-y-4">
-        <h3 className="text-lg font-medium text-white">Select an Incentive</h3>
-        <div className="grid gap-3">
-          {incentives.filter(i => i.active).map(incentive => (
-            <button
-              key={incentive.id}
-              onClick={() => setSelectedIncentive(incentive.id)}
-              className={`p-4 rounded-lg text-left transition-colors ${
-                selectedIncentive === incentive.id
-                  ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white'
-                  : 'bg-white/5 text-white/70 hover:bg-white/10'
-              }`}
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <h4 className="font-medium">{incentive.title}</h4>
-                  <p className="text-sm mt-1">{incentive.description}</p>
-                </div>
-                <div className="flex items-center">
-                  <FaStar className="text-yellow-400 mr-1" />
-                  <span>{incentive.points} points</span>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <>
       <button
@@ -273,7 +250,7 @@ const Survey = ({ businessId, businessName, onComplete, incentives = [] }: Surve
                   </div>
 
                   <div className="space-y-6">
-                    {currentQuestionIndex < mockQuestions.length ? (
+                    {currentQuestionIndex < questions.length ? (
                       <>
                         <div className="w-full bg-white/10 rounded-full h-2">
                           <div
@@ -290,7 +267,6 @@ const Survey = ({ businessId, businessName, onComplete, incentives = [] }: Surve
                       </>
                     ) : (
                       <>
-                        {renderIncentiveSelection()}
                         {error && (
                           <div className="text-red-400 text-sm">{error}</div>
                         )}
@@ -303,9 +279,9 @@ const Survey = ({ businessId, businessName, onComplete, incentives = [] }: Surve
                           </button>
                           <button
                             onClick={handleSubmit}
-                            disabled={!selectedIncentive || submitting}
+                            disabled={!canSubmit() || submitting}
                             className={`px-4 py-2 rounded-lg text-white font-medium transition-opacity ${
-                              !selectedIncentive || submitting
+                              !canSubmit() || submitting
                                 ? 'opacity-50 cursor-not-allowed'
                                 : 'hover:opacity-90'
                             }`}

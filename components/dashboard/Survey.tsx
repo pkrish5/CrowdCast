@@ -25,6 +25,7 @@ type Answer = {
 type SurveyProps = {
   businessId: string;
   businessName?: string;
+  points: number;
   incentives?: {
     id: string;
     title: string;
@@ -35,7 +36,7 @@ type SurveyProps = {
   onComplete: (points: number) => void;
 };
 
-const Survey = ({ businessId, businessName, incentives, onComplete }: SurveyProps) => {
+const Survey = ({ businessId, businessName, points, incentives, onComplete }: SurveyProps) => {
   const { currentUser } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -109,7 +110,7 @@ const Survey = ({ businessId, businessName, incentives, onComplete }: SurveyProp
     try {
       const userRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userRef, {
-        points: increment(50), // Default points for completing a survey
+        points: increment(points), // Use custom points from business
         completedSurveys: arrayUnion(businessId),
         [`surveyAnswers.${businessId}`]: {
           answers,
@@ -118,7 +119,7 @@ const Survey = ({ businessId, businessName, incentives, onComplete }: SurveyProp
       });
 
       setIsOpen(false);
-      onComplete(50);
+      onComplete(points);
     } catch (error) {
       console.error('Error submitting survey:', error);
       setError('Failed to submit survey. Please try again.');

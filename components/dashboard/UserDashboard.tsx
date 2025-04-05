@@ -25,7 +25,8 @@ import {
   FaSubway,
   FaWalking,
   FaBicycle,
-  FaCar
+  FaCar,
+  FaStore
 } from 'react-icons/fa';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, increment, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -60,6 +61,7 @@ type Business = {
     description: string;
     points: number;
     active: boolean;
+    claimed?: boolean;
   }[];
 };
 
@@ -97,19 +99,30 @@ type TransportOption = {
   stops: number;
 };
 
+type Incentive = {
+  id: string;
+  title: string;
+  description: string;
+  points: number;
+  active: boolean;
+  claimed?: boolean;
+};
+
 const UserDashboard = () => {
   const { currentUser, updateUserProfile, logout } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [favoriteBusinesses, setFavoriteBusinesses] = useState<string[]>([]);
-  const [selectedBusiness, setSelectedBusiness] = useState<string | null>(null);
+  const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
   const [selectedBusinessName, setSelectedBusinessName] = useState<string | null>(null);
   const [occupancyHistory, setOccupancyHistory] = useState<OccupancyHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'discover' | 'favorites' | 'incentives' | 'transportation'>('discover');
   const [userPoints, setUserPoints] = useState(0);
-  const [achievements, setAchievements] = useState<Achievement[]>([]);
-  const [rewards, setRewards] = useState<Reward[]>([]);
+  const [userAchievements, setUserAchievements] = useState<Achievement[]>([]);
+  const [userRewards, setUserRewards] = useState<Reward[]>([]);
+  const [showIncentives, setShowIncentives] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
   const [surveyModalOpen, setSurveyModalOpen] = useState(false);
   const [selectedBusinessForSurvey, setSelectedBusinessForSurvey] = useState<string | null>(null);
   const [completedSurveys, setCompletedSurveys] = useState<string[]>([]);
@@ -118,10 +131,10 @@ const UserDashboard = () => {
   const dailySurveyLimit = 3;
   
   // Transportation data
-  const { transportOptions, loading: transportLoading, error: transportError } = useTransportationData(selectedBusiness || '');
+  const { transportOptions, loading: transportLoading, error: transportError } = useTransportationData(selectedBusiness?.id || '');
   
   // Add Aitrios data hook with selected business
-  const { stats: aitriosStats, loading: aitriosLoading } = useAitriosData(selectedBusiness || '');
+  const { stats: aitriosStats, loading: aitriosLoading } = useAitriosData(selectedBusiness?.id || '');
 
   // Fetch user's favorite businesses and survey data from Firestore
   useEffect(() => {
@@ -176,88 +189,218 @@ const UserDashboard = () => {
     fetchUserData();
   }, [currentUser]);
 
-  // Fetch businesses from Firestore
+  // Fetch businesses data
   useEffect(() => {
-    const fetchBusinesses = async () => {
+    const loadBusinesses = async () => {
+      if (!currentUser) return;
+      
       try {
         setLoading(true);
-        
-        // Fetch businesses from users collection
-        const usersRef = collection(db, 'users');
-        const usersQuery = query(usersRef, where('userType', '==', 'business'));
-        const usersSnapshot = await getDocs(usersQuery);
-        
-        // Fetch businesses from businesses collection
         const businessesRef = collection(db, 'businesses');
-        const businessesSnapshot = await getDocs(businessesRef);
+        const q = query(businessesRef, where('status', '==', 'active'));
+        const querySnapshot = await getDocs(q);
         
-        const fetchedBusinesses: Business[] = [];
+        let businessesData = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          surveyPoints: doc.data().surveyPoints || 50,
+          isFavorite: favoriteBusinesses.includes(doc.id),
+          hasSurvey: true,
+          currentOccupancy: doc.data().currentOccupancy || 0,
+          maxCapacity: doc.data().maxCapacity || 100,
+          occupancy: doc.data().occupancyPercentage || 0,
+          waitTime: doc.data().waitTime || 0,
+          rating: doc.data().rating || 4.5,
+          reviews: doc.data().reviews || 0
+        })) as Business[];
         
-        // Process businesses from users collection
-        usersSnapshot.forEach((doc) => {
-          const businessData = doc.data();
-          const businessDataToUse = {
-            id: doc.id,
-            name: businessData.businessName || businessData.displayName || 'Unnamed Business',
-            category: businessData.category || 'Uncategorized',
-            description: businessData.description || 'No description provided',
-            location: businessData.location || 'No location provided',
-            rating: businessData.rating || 0,
-            reviews: businessData.reviews || 0,
-            imageUrl: businessData.imageUrl || '',
-            occupancy: businessData.occupancy || 0,
-            waitTime: businessData.waitTime || 0,
-            currentOccupancy: businessData.currentOccupancy || 0,
-            maxCapacity: businessData.maxCapacity || 100,
-            isFavorite: favoriteBusinesses.includes(doc.id),
-            hasSurvey: businessData.hasSurvey || false,
-            surveyPoints: businessData.surveyPoints || 50,
-            incentives: businessData.incentives || []
-          };
-          fetchedBusinesses.push(businessDataToUse);
-        });
+        // If no businesses are fetched, use mock data
+        if (businessesData.length === 0) {
+          console.log('No businesses found in Firestore, using mock data');
+          businessesData = [
+            {
+              id: 'mock1',
+              name: 'Coffee Shop',
+              category: 'Café',
+              description: 'A cozy coffee shop with great pastries',
+              location: '123 Main St',
+              rating: 4.5,
+              reviews: 120,
+              imageUrl: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+              occupancy: 65,
+              waitTime: 10,
+              currentOccupancy: 65,
+              maxCapacity: 100,
+              isFavorite: false,
+              hasSurvey: true,
+              surveyPoints: 50,
+              incentives: [
+                {
+                  id: 'inc1',
+                  title: 'Free Coffee',
+                  description: 'Get a free coffee after completing 5 surveys',
+                  points: 250,
+                  active: true
+                }
+              ]
+            },
+            {
+              id: 'mock2',
+              name: 'Pizza Place',
+              category: 'Restaurant',
+              description: 'Best pizza in town with a variety of toppings',
+              location: '456 Oak Ave',
+              rating: 4.7,
+              reviews: 85,
+              imageUrl: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+              occupancy: 80,
+              waitTime: 15,
+              currentOccupancy: 80,
+              maxCapacity: 100,
+              isFavorite: false,
+              hasSurvey: true,
+              surveyPoints: 75,
+              incentives: [
+                {
+                  id: 'inc2',
+                  title: 'Free Slice',
+                  description: 'Get a free slice of pizza after completing 3 surveys',
+                  points: 150,
+                  active: true
+                }
+              ]
+            },
+            {
+              id: 'mock3',
+              name: 'Bookstore',
+              category: 'Retail',
+              description: 'Independent bookstore with rare editions',
+              location: '789 Pine St',
+              rating: 4.3,
+              reviews: 45,
+              imageUrl: 'https://images.unsplash.com/photo-1521587760476-6c12a4b040da?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+              occupancy: 30,
+              waitTime: 0,
+              currentOccupancy: 30,
+              maxCapacity: 100,
+              isFavorite: false,
+              hasSurvey: true,
+              surveyPoints: 50,
+              incentives: [
+                {
+                  id: 'inc3',
+                  title: '10% Discount',
+                  description: 'Get 10% off your next purchase after completing 2 surveys',
+                  points: 100,
+                  active: true
+                }
+              ]
+            }
+          ];
+        }
         
-        // Process businesses from businesses collection
-        businessesSnapshot.forEach((doc) => {
-          const businessData = doc.data();
-          const businessDataToUse = {
-            id: doc.id,
-            name: businessData.name || 'Unnamed Business',
-            category: businessData.category || 'Uncategorized',
-            description: businessData.description || 'No description provided',
-            location: businessData.address || 'No location provided',
-            rating: businessData.rating || 0,
-            reviews: businessData.reviews || 0,
-            imageUrl: businessData.imageUrl || '',
-            occupancy: businessData.occupancyPercentage || 0,
-            waitTime: businessData.waitTime || 0,
-            currentOccupancy: businessData.currentOccupancy || 0,
-            maxCapacity: businessData.maxCapacity || 100,
-            isFavorite: favoriteBusinesses.includes(doc.id),
-            hasSurvey: !!businessData.activeSurvey,
-            surveyPoints: businessData.surveyPoints || 50,
-            incentives: businessData.incentives || []
-          };
-          fetchedBusinesses.push(businessDataToUse);
-        });
-        
-        setBusinesses(fetchedBusinesses);
+        console.log('Fetched businesses:', businessesData);
+        setBusinesses(businessesData);
       } catch (error) {
         console.error('Error fetching businesses:', error);
+        
+        // Use mock data if there's an error
+        console.log('Error fetching businesses, using mock data');
+        const mockBusinesses = [
+          {
+            id: 'mock1',
+            name: 'Coffee Shop',
+            category: 'Café',
+            description: 'A cozy coffee shop with great pastries',
+            location: '123 Main St',
+            rating: 4.5,
+            reviews: 120,
+            imageUrl: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+            occupancy: 65,
+            waitTime: 10,
+            currentOccupancy: 65,
+            maxCapacity: 100,
+            isFavorite: false,
+            hasSurvey: true,
+            surveyPoints: 50,
+            incentives: [
+              {
+                id: 'inc1',
+                title: 'Free Coffee',
+                description: 'Get a free coffee after completing 5 surveys',
+                points: 250,
+                active: true
+              }
+            ]
+          },
+          {
+            id: 'mock2',
+            name: 'Pizza Place',
+            category: 'Restaurant',
+            description: 'Best pizza in town with a variety of toppings',
+            location: '456 Oak Ave',
+            rating: 4.7,
+            reviews: 85,
+            imageUrl: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+            occupancy: 80,
+            waitTime: 15,
+            currentOccupancy: 80,
+            maxCapacity: 100,
+            isFavorite: false,
+            hasSurvey: true,
+            surveyPoints: 75,
+            incentives: [
+              {
+                id: 'inc2',
+                title: 'Free Slice',
+                description: 'Get a free slice of pizza after completing 3 surveys',
+                points: 150,
+                active: true
+              }
+            ]
+          },
+          {
+            id: 'mock3',
+            name: 'Bookstore',
+            category: 'Retail',
+            description: 'Independent bookstore with rare editions',
+            location: '789 Pine St',
+            rating: 4.3,
+            reviews: 45,
+            imageUrl: 'https://images.unsplash.com/photo-1521587760476-6c12a4b040da?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+            occupancy: 30,
+            waitTime: 0,
+            currentOccupancy: 30,
+            maxCapacity: 100,
+            isFavorite: false,
+            hasSurvey: true,
+            surveyPoints: 50,
+            incentives: [
+              {
+                id: 'inc3',
+                title: '10% Discount',
+                description: 'Get 10% off your next purchase after completing 2 surveys',
+                points: 100,
+                active: true
+              }
+            ]
+          }
+        ];
+        setBusinesses(mockBusinesses);
       } finally {
         setLoading(false);
       }
     };
     
-    fetchBusinesses();
-  }, [favoriteBusinesses]);
+    loadBusinesses();
+  }, [currentUser, favoriteBusinesses]);
 
   // Update business data with real-time occupancy
   useEffect(() => {
     if (selectedBusiness && aitriosStats) {
       setBusinesses(prevBusinesses => 
         prevBusinesses.map(business => 
-          business.id === selectedBusiness
+          business.id === selectedBusiness.id
             ? {
                 ...business,
                 occupancy: aitriosStats.occupancyPercentage,
@@ -290,6 +433,112 @@ const UserDashboard = () => {
       setSurveysCompletedToday(prev => prev + 1);
       setLastSurveyDate(today);
       setSurveyModalOpen(false);
+      // Refresh business data to update survey status
+      const businessesRef = collection(db, 'businesses');
+      const q = query(businessesRef, where('status', '==', 'active'));
+      const querySnapshot = await getDocs(q);
+      
+      let businessesData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        surveyPoints: doc.data().surveyPoints || 50,
+        isFavorite: favoriteBusinesses.includes(doc.id),
+        hasSurvey: true,
+        currentOccupancy: doc.data().currentOccupancy || 0,
+        maxCapacity: doc.data().maxCapacity || 100,
+        occupancy: doc.data().occupancyPercentage || 0,
+        waitTime: doc.data().waitTime || 0,
+        rating: doc.data().rating || 4.5,
+        reviews: doc.data().reviews || 0
+      })) as Business[];
+      
+      // If no businesses are fetched, use mock data
+      if (businessesData.length === 0) {
+        console.log('No businesses found in Firestore, using mock data');
+        businessesData = [
+          {
+            id: 'mock1',
+            name: 'Coffee Shop',
+            category: 'Café',
+            description: 'A cozy coffee shop with great pastries',
+            location: '123 Main St',
+            rating: 4.5,
+            reviews: 120,
+            imageUrl: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+            occupancy: 65,
+            waitTime: 10,
+            currentOccupancy: 65,
+            maxCapacity: 100,
+            isFavorite: false,
+            hasSurvey: true,
+            surveyPoints: 50,
+            incentives: [
+              {
+                id: 'inc1',
+                title: 'Free Coffee',
+                description: 'Get a free coffee after completing 5 surveys',
+                points: 250,
+                active: true
+              }
+            ]
+          },
+          {
+            id: 'mock2',
+            name: 'Pizza Place',
+            category: 'Restaurant',
+            description: 'Best pizza in town with a variety of toppings',
+            location: '456 Oak Ave',
+            rating: 4.7,
+            reviews: 85,
+            imageUrl: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+            occupancy: 80,
+            waitTime: 15,
+            currentOccupancy: 80,
+            maxCapacity: 100,
+            isFavorite: false,
+            hasSurvey: true,
+            surveyPoints: 75,
+            incentives: [
+              {
+                id: 'inc2',
+                title: 'Free Slice',
+                description: 'Get a free slice of pizza after completing 3 surveys',
+                points: 150,
+                active: true
+              }
+            ]
+          },
+          {
+            id: 'mock3',
+            name: 'Bookstore',
+            category: 'Retail',
+            description: 'Independent bookstore with rare editions',
+            location: '789 Pine St',
+            rating: 4.3,
+            reviews: 45,
+            imageUrl: 'https://images.unsplash.com/photo-1521587760476-6c12a4b040da?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
+            occupancy: 30,
+            waitTime: 0,
+            currentOccupancy: 30,
+            maxCapacity: 100,
+            isFavorite: false,
+            hasSurvey: true,
+            surveyPoints: 50,
+            incentives: [
+              {
+                id: 'inc3',
+                title: '10% Discount',
+                description: 'Get 10% off your next purchase after completing 2 surveys',
+                points: 100,
+                active: true
+              }
+            ]
+          }
+        ];
+      }
+      
+      console.log('Refreshed businesses after survey:', businessesData);
+      setBusinesses(businessesData);
     } catch (error) {
       console.error('Error updating survey data:', error);
     }
@@ -346,23 +595,32 @@ const UserDashboard = () => {
   };
 
   const handleSurveyClick = (businessId: string) => {
-    if (surveysCompletedToday >= dailySurveyLimit) {
-      alert('You have reached your daily survey limit. Please try again tomorrow.');
-      return;
+    const business = businesses.find(b => b.id === businessId);
+    if (business) {
+      setSelectedBusiness(business);
     }
-    setSelectedBusinessForSurvey(businessId);
-    setSurveyModalOpen(true);
   };
 
-  const handleClaimReward = (rewardId: string) => {
-    const reward = rewards.find(r => r.id === rewardId);
-    if (reward && userPoints >= reward.points) {
-      setUserPoints(prev => prev - reward.points);
-      setRewards(prev => 
-        prev.map(r => 
+  const handleClaimReward = async (rewardId: string) => {
+    if (!currentUser) return;
+
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const reward = userRewards.find(r => r.id === rewardId);
+      
+      if (reward && userPoints >= reward.points) {
+        await updateDoc(userRef, {
+          points: increment(-reward.points),
+          claimedRewards: arrayUnion(rewardId)
+        });
+        
+        setUserPoints(prev => prev - reward.points);
+        setUserRewards(prev => prev.map(r => 
           r.id === rewardId ? { ...r, claimed: true } : r
-        )
-      );
+        ));
+      }
+    } catch (error) {
+      console.error('Error claiming reward:', error);
     }
   };
 
@@ -376,60 +634,86 @@ const UserDashboard = () => {
 
   // Update the business card click handler
   const handleBusinessClick = (businessId: string, businessName: string) => {
-    setSelectedBusiness(businessId);
+    setSelectedBusiness(businesses.find(b => b.id === businessId) || null);
     setSelectedBusinessName(businessName);
     setActiveTab('transportation');
   };
 
   // Update the business card rendering in the discover tab
-  const renderDiscoverTab = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {businesses.map((business) => (
-        <motion.div
-          key={business.id}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          whileHover={{ scale: 1.02 }}
-          className="bg-white/5 border border-white/10 rounded-xl p-6 hover:bg-white/10 transition-colors cursor-pointer"
-          onClick={() => handleBusinessClick(business.id, business.name)}
-        >
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h3 className="text-xl font-bold text-white">{business.name}</h3>
-              <p className="text-white/70">{business.category}</p>
+  const renderDiscoverTab = () => {
+    console.log('Rendering discover tab with businesses:', businesses);
+    
+    if (businesses.length === 0) {
+      return (
+        <div className="text-center py-12">
+          <FaStore className="mx-auto text-4xl text-white/30 mb-4" />
+          <p className="text-white/50">No businesses available at the moment</p>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {businesses.map((business) => (
+          <motion.div
+            key={business.id}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            whileHover={{ scale: 1.02 }}
+            className="bg-white/5 border border-white/10 rounded-xl p-6 hover:bg-white/10 transition-colors cursor-pointer"
+            onClick={() => handleBusinessClick(business.id, business.name)}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-bold text-white">{business.name}</h3>
+                <p className="text-white/70">{business.category}</p>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleToggleFavorite(business.id);
+                }}
+                className="text-pink-500 hover:text-pink-400 transition-colors"
+              >
+                {favoriteBusinesses.includes(business.id) ? (
+                  <FaHeart className="text-xl" />
+                ) : (
+                  <FaHeart className="text-xl text-white/30" />
+                )}
+              </button>
             </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleToggleFavorite(business.id);
-              }}
-              className="text-pink-500 hover:text-pink-400 transition-colors"
-            >
-              {favoriteBusinesses.includes(business.id) ? (
-                <FaHeart className="text-xl" />
-              ) : (
-                <FaHeart className="text-xl text-white/30" />
-              )}
-            </button>
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center text-white/70">
-              <FaUsers className="mr-2" />
-              <span>{business.occupancy}% Occupied</span>
+            <div className="space-y-2">
+              <div className="flex items-center text-white/70">
+                <FaUsers className="mr-2" />
+                <span>{business.occupancy}% Occupied</span>
+              </div>
+              <div className="flex items-center text-white/70">
+                <FaClock className="mr-2" />
+                <span>{business.waitTime} min wait</span>
+              </div>
+              <div className="flex items-center text-white/70">
+                <FaMapMarkerAlt className="mr-2" />
+                <span>{business.location}</span>
+              </div>
             </div>
-            <div className="flex items-center text-white/70">
-              <FaClock className="mr-2" />
-              <span>{business.waitTime} min wait</span>
-            </div>
-            <div className="flex items-center text-white/70">
-              <FaMapMarkerAlt className="mr-2" />
-              <span>{business.location}</span>
-            </div>
-          </div>
-        </motion.div>
-      ))}
-    </div>
-  );
+            
+            {business.hasSurvey && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSurveyClick(business.id);
+                }}
+                className="mt-4 w-full bg-pink-500/50 hover:bg-pink-500/70 text-white py-2 px-4 rounded-lg transition-colors flex items-center justify-center space-x-2"
+              >
+                <FaPoll />
+                <span>Complete Survey ({business.surveyPoints} points)</span>
+              </button>
+            )}
+          </motion.div>
+        ))}
+      </div>
+    );
+  };
 
   // Get crowd level color
   const getCrowdLevelColor = (level: number) => {
@@ -650,6 +934,85 @@ const UserDashboard = () => {
     );
   }, [selectedBusiness, selectedBusinessName, transportLoading, aitriosLoading, transportError, transportOptions, aitriosStats]);
 
+  const renderIncentives = () => {
+    if (!selectedBusiness?.incentives) return null;
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -20 }}
+        className="bg-white/5 rounded-lg p-6 mb-8"
+      >
+        <h3 className="text-xl font-semibold mb-4">Available Incentives</h3>
+        <div className="grid gap-4">
+          {selectedBusiness.incentives.map(incentive => (
+            <div
+              key={incentive.id}
+              className="bg-white/5 rounded-lg p-4 flex items-center justify-between"
+            >
+              <div>
+                <h4 className="font-medium">{incentive.title}</h4>
+                <p className="text-white/70 text-sm">{incentive.description}</p>
+              </div>
+              <div className="flex items-center space-x-4">
+                <span className="text-pink-500">{incentive.points} points</span>
+                <button
+                  onClick={() => handleClaimReward(incentive.id)}
+                  disabled={userPoints < incentive.points || incentive.claimed}
+                  className={`px-4 py-2 rounded-lg ${
+                    userPoints >= incentive.points && !incentive.claimed
+                      ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white'
+                      : 'bg-white/10 text-white/40 cursor-not-allowed'
+                  }`}
+                >
+                  {incentive.claimed ? 'Claimed' : 'Claim'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
+    );
+  };
+
+  const renderAchievements = () => {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -20 }}
+        className="bg-white/5 rounded-lg p-6 mb-8"
+      >
+        <h3 className="text-xl font-semibold mb-4">Achievements</h3>
+        <div className="grid grid-cols-2 gap-4">
+          {userAchievements.map(achievement => (
+            <div
+              key={achievement.id}
+              className={`bg-white/5 rounded-lg p-4 ${
+                achievement.completed ? 'border-2 border-pink-500' : ''
+              }`}
+            >
+              <div className="flex items-center space-x-3 mb-2">
+                {achievement.icon}
+                <h4 className="font-medium">{achievement.title}</h4>
+              </div>
+              <p className="text-white/70 text-sm mb-2">{achievement.description}</p>
+              <div className="flex items-center justify-between">
+                <span className="text-pink-500">{achievement.points} points</span>
+                {achievement.completed && (
+                  <span className="text-green-400 text-sm">
+                    Completed {achievement.completedAt}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white">
       {/* Navigation */}
@@ -828,83 +1191,19 @@ const UserDashboard = () => {
               {/* Incentives Tab */}
               {activeTab === 'incentives' && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Achievements Section */}
-                  <motion.div 
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.5 }}
-                    className="bg-black/30 backdrop-blur-md border border-white/10 rounded-xl shadow-lg p-6"
-                  >
-                    <h2 className="text-2xl font-bold text-white mb-4">Achievements</h2>
-                    <div className="space-y-4">
-                      {achievements.map((achievement) => (
-                        <motion.div
-                          key={achievement.id}
-                          whileHover={{ x: 5, transition: { duration: 0.2 } }}
-                          className={`flex items-center justify-between p-4 rounded-lg ${
-                            achievement.completed ? 'bg-green-500/20 border border-green-500/30' : 'bg-white/5 border border-white/10'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-4">
-                            {achievement.icon}
-                            <div>
-                              <h3 className="font-semibold text-white">{achievement.title}</h3>
-                              <p className="text-sm text-white/70">{achievement.description}</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-semibold text-blue-400">+{achievement.points} points</div>
-                            {achievement.completed && (
-                              <div className="text-sm text-green-400">Completed {achievement.completedAt}</div>
-                            )}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </motion.div>
-
-                  {/* Rewards Section */}
-                  <motion.div 
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.5 }}
-                    className="bg-black/30 backdrop-blur-md border border-white/10 rounded-xl shadow-lg p-6"
-                  >
-                    <h2 className="text-2xl font-bold text-white mb-4">Available Rewards</h2>
-                    <div className="space-y-4">
-                      {rewards.map((reward) => (
-                        <motion.div
-                          key={reward.id}
-                          whileHover={{ x: 5, transition: { duration: 0.2 } }}
-                          className={`flex items-center justify-between p-4 rounded-lg ${
-                            reward.claimed ? 'bg-white/5 border border-white/10 opacity-50' : 'bg-white/5 border border-white/10'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-4">
-                            {reward.icon}
-                            <div>
-                              <h3 className="font-semibold text-white">{reward.title}</h3>
-                              <p className="text-sm text-white/70">{reward.description}</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-semibold text-blue-400">{reward.points} points</div>
-                            {!reward.claimed && userPoints >= reward.points && (
-                              <button
-                                onClick={() => handleClaimReward(reward.id)}
-                                className="mt-2 bg-pink-500/50 hover:bg-pink-500/70 text-white py-1 px-3 rounded-lg transition-colors text-sm"
-                              >
-                                Claim
-                              </button>
-                            )}
-                            {reward.claimed && (
-                              <div className="text-sm text-green-400">Claimed</div>
-                            )}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </motion.div>
+                  {selectedBusiness && (
+                    <>
+                      <Survey
+                        businessId={selectedBusiness.id}
+                        businessName={selectedBusiness.name}
+                        points={selectedBusiness.surveyPoints || 50}
+                        incentives={selectedBusiness.incentives}
+                        onComplete={(points) => handleSurveyComplete(selectedBusiness.id, points)}
+                      />
+                      {renderIncentives()}
+                      {renderAchievements()}
+                    </>
+                  )}
                 </div>
               )}
 
@@ -970,6 +1269,7 @@ const UserDashboard = () => {
             <Survey 
               businessId={selectedBusinessForSurvey} 
               businessName={businesses.find(b => b.id === selectedBusinessForSurvey)?.name}
+              points={businesses.find(b => b.id === selectedBusinessForSurvey)?.surveyPoints || 50}
               incentives={businesses.find(b => b.id === selectedBusinessForSurvey)?.incentives}
               onComplete={(points) => handleSurveyComplete(selectedBusinessForSurvey, points)} 
             />

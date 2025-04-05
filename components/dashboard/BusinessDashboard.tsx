@@ -55,6 +55,7 @@ interface BusinessData {
     points: number;
     status: 'active' | 'inactive';
   }>;
+  surveyPoints: number;
 }
 
 interface UserData {
@@ -125,6 +126,7 @@ const BusinessDashboard = () => {
   });
   const [createSurveyModalOpen, setCreateSurveyModalOpen] = useState(false);
   const [hasActiveSurvey, setHasActiveSurvey] = useState(false);
+  const [surveyPoints, setSurveyPoints] = useState(50);
 
   // Add Aitrios data hook
   const { stats: aitriosStats, loading: aitriosLoading } = useAitriosData(currentUser?.uid || '');
@@ -187,8 +189,11 @@ const BusinessDashboard = () => {
   const handleSignOut = async () => {
     try {
       await logout();
+      // Redirect to home page after logout
+      window.location.href = '/';
     } catch (error) {
       console.error('Error signing out:', error);
+      toast.error('Failed to sign out. Please try again.');
     }
   };
 
@@ -516,6 +521,20 @@ const BusinessDashboard = () => {
     }
   };
 
+  const handleSurveyPointsChange = async (points: number) => {
+    if (!currentUser) return;
+    
+    try {
+      const businessRef = doc(db, 'businesses', currentUser.uid);
+      await updateDoc(businessRef, {
+        surveyPoints: points
+      });
+      setSurveyPoints(points);
+    } catch (error) {
+      console.error('Error updating survey points:', error);
+    }
+  };
+
   if (!businessData) return null;
 
   return (
@@ -530,13 +549,13 @@ const BusinessDashboard = () => {
               </Link>
             </div>
             <div className="flex items-center space-x-4">
-              <Link href="/dashboard" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
+              <Link href="/business/dashboard" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
                 Dashboard
               </Link>
-              <Link href="/profile" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
+              <Link href="/business/profile" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
                 Profile
               </Link>
-              <Link href="/settings" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
+              <Link href="/business/settings" className="px-4 py-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors">
                 Settings
               </Link>
               <button
@@ -1292,6 +1311,22 @@ const BusinessDashboard = () => {
                   </div>
                 </motion.div>
               )}
+
+              {/* Survey Points Customization */}
+              <div className="bg-white/5 rounded-lg p-6 mb-8">
+                <h3 className="text-xl font-semibold mb-4">Survey Points</h3>
+                <div className="flex items-center space-x-4">
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={surveyPoints}
+                    onChange={(e) => handleSurveyPointsChange(parseInt(e.target.value))}
+                    className="w-24 px-3 py-2 bg-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-pink-500"
+                  />
+                  <span className="text-white/70">points per survey completion</span>
+                </div>
+              </div>
             </>
           )}
         </motion.div>
@@ -1331,6 +1366,7 @@ const BusinessDashboard = () => {
             <Survey 
               businessId={currentUser?.uid || ''} 
               businessName={businessData?.name || ''} 
+              points={surveyPoints}
               onComplete={() => setSurveyModalOpen(false)} 
             />
           </motion.div>

@@ -65,6 +65,12 @@ export const useAitriosData = (deviceId: string, maxCapacity: number = 150) => {
   // Track if this is the initial load
   const isInitialLoadRef = useRef<boolean>(true);
   
+  // Track the last person count for change detection
+  const lastPersonCountRef = useRef<number>(0);
+  
+  // Track the last occupancy percentage for change detection
+  const lastOccupancyPercentageRef = useRef<number>(0);
+  
   // Update the ref when stats change
   useEffect(() => {
     currentStatsRef.current = stats;
@@ -72,9 +78,10 @@ export const useAitriosData = (deviceId: string, maxCapacity: number = 150) => {
 
   // Memoize the fetch function to prevent unnecessary recreations
   const fetchData = useCallback(async () => {
-    // Only update if at least 3 seconds have passed since the last update
+    // Only update if at least 1 second has passed since the last update
+    // Reduced from 3 seconds to 1 second for more responsive updates
     const now = Date.now();
-    if (now - lastUpdateTimeRef.current < 3000) {
+    if (now - lastUpdateTimeRef.current < 1000) {
       return;
     }
     
@@ -84,10 +91,15 @@ export const useAitriosData = (deviceId: string, maxCapacity: number = 150) => {
         setLoading(true);
       }
       
-      // In a real implementation, this would be an actual fetch call
+      // Use the same API endpoint that works in the TransportTracker component
       const response = await fetch(
         "https://0myrzet12k.execute-api.us-east-1.amazonaws.com/prod/devices/Aid-80070001-0000-2000-9002-000000000a9c/data?key=202504ut&pj=kyoro"
       );
+      
+      if (!response.ok) {
+        throw new Error(`API responded with status: ${response.status}`);
+      }
+      
       const data: AitriosData = await response.json();
       
       // Process detections - only consider class_id 71 (humans)
@@ -120,12 +132,22 @@ export const useAitriosData = (deviceId: string, maxCapacity: number = 150) => {
       // Use actual person count from API for more accurate data
       const personCount = detections.length;
       
-      // Apply a smoother transition by blending with previous count
+      // Add random fluctuation for more realistic data (from TransportTracker)
+      const randomChange = Math.floor(Math.random() * 10) - 4; // -4 to +5
       const previousCount = currentStatsRef.current.currentOccupancy;
-      const blendFactor = 0.7; // Higher value = more weight to previous count
-      const newCount = Math.round(
-        (previousCount * blendFactor) + (personCount * (1 - blendFactor))
-      );
+      
+      // Apply a smoother transition by blending with previous count
+      // Use a lower blend factor for more responsive updates
+      const significantChange = Math.abs(personCount - lastPersonCountRef.current) > 0;
+      const blendFactor = significantChange ? 0.3 : 0.7; // More responsive when significant changes occur
+      
+      // Calculate new count with random fluctuation and blending
+      const newCount = Math.max(0, Math.round(
+        (previousCount * blendFactor) + ((personCount + randomChange) * (1 - blendFactor))
+      ));
+      
+      // Update the last person count
+      lastPersonCountRef.current = personCount;
       
       // Get formatted timestamp with seconds
       const timestamp = new Date();
@@ -139,6 +161,12 @@ export const useAitriosData = (deviceId: string, maxCapacity: number = 150) => {
       const occupancyPercentage = Math.round(
         (newCount / maxCapacity) * 100
       );
+      
+      // Check if occupancy percentage has changed significantly
+      const occupancyChanged = Math.abs(occupancyPercentage - lastOccupancyPercentageRef.current) > 0;
+      
+      // Update the last occupancy percentage
+      lastOccupancyPercentageRef.current = occupancyPercentage;
       
       let status: 'normal' | 'warning' | 'critical' = 'normal';
       if (occupancyPercentage >= 90) status = 'critical';
@@ -165,10 +193,34 @@ export const useAitriosData = (deviceId: string, maxCapacity: number = 150) => {
       // Update the last update time
       lastUpdateTimeRef.current = now;
       
+      // Log significant changes for debugging
+      if (occupancyChanged) {
+        console.log(`Occupancy changed: ${occupancyPercentage}% (${newCount}/${maxCapacity})`);
+      }
+      
       setError(null);
     } catch (error) {
       console.error("Error fetching Aitrios data:", error);
       setError("Failed to fetch occupancy data");
+      
+      // If we have previous data, don't reset it on error
+      // This ensures the UI doesn't break if there's a temporary API issue
+      if (currentStatsRef.current.currentOccupancy === 0) {
+        // Only set default data if we don't have any data yet
+        setStats(prevStats => ({
+          ...prevStats,
+          currentOccupancy: 0,
+          maxCapacity,
+          occupancyPercentage: 0,
+          status: 'normal',
+          lastUpdate: new Date().toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit' 
+          }),
+          movements: []
+        }));
+      }
     } finally {
       setLoading(false);
       isInitialLoadRef.current = false;
@@ -179,8 +231,8 @@ export const useAitriosData = (deviceId: string, maxCapacity: number = 150) => {
     // Initial fetch
     fetchData();
 
-    // Set up interval for regular updates - reduced frequency to 5 seconds
-    const interval = setInterval(fetchData, 5000);
+    // Set up interval for regular updates - increased frequency to 2 seconds for more responsive updates
+    const interval = setInterval(fetchData, 2000);
 
     // Clean up interval on unmount
     return () => clearInterval(interval);

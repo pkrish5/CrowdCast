@@ -48,7 +48,7 @@ const getTransportIcon = (type: string) => {
 
 const TransportationSection: React.FC<TransportationSectionProps> = ({ transportOptions }) => {
   // Get Aitrios data for occupancy-based crowd level adjustments
-  const { stats: aitriosStats } = useAitriosData('');
+  const { stats: aitriosStats, loading: aitriosLoading } = useAitriosData('');
   
   // Store the base transport options
   const [baseOptions, setBaseOptions] = useState<TransportOption[]>([]);
@@ -56,23 +56,25 @@ const TransportationSection: React.FC<TransportationSectionProps> = ({ transport
   // Use a ref to track the last occupancy percentage to prevent unnecessary updates
   const lastOccupancyRef = useRef<number>(0);
   
+  // Track if we've initialized the base options
+  const initializedRef = useRef<boolean>(false);
+  
   // Initialize base options only once
   useEffect(() => {
-    if (transportOptions.length > 0 && baseOptions.length === 0) {
+    if (transportOptions.length > 0 && !initializedRef.current) {
       setBaseOptions(transportOptions);
       lastOccupancyRef.current = aitriosStats.occupancyPercentage;
+      initializedRef.current = true;
+      
+      console.log('TransportationSection initialized with occupancy:', aitriosStats.occupancyPercentage);
     }
-  }, [transportOptions, baseOptions.length, aitriosStats.occupancyPercentage]);
+  }, [transportOptions, aitriosStats.occupancyPercentage]);
   
   // Calculate adjusted crowd levels based on occupancy
   const adjustedCrowdLevels = useMemo(() => {
     if (baseOptions.length === 0) return {};
     
-    // Only recalculate if occupancy has changed significantly (more than 1%)
-    if (Math.abs(aitriosStats.occupancyPercentage - lastOccupancyRef.current) < 1) {
-      return {};
-    }
-    
+    // Always recalculate when occupancy changes to ensure real-time updates
     const occupancyFactor = aitriosStats.occupancyPercentage / 100;
     const newCrowdLevels: Record<string, number> = {};
     
@@ -80,9 +82,11 @@ const TransportationSection: React.FC<TransportationSectionProps> = ({ transport
       let adjustedCrowdLevel = option.crowdLevel;
       
       if (option.type === 'bus' || option.type === 'subway') {
-        adjustedCrowdLevel = Math.min(100, option.crowdLevel + (occupancyFactor * 20));
+        // More sensitive to occupancy changes for public transport
+        adjustedCrowdLevel = Math.min(100, option.crowdLevel + (occupancyFactor * 30));
       } else {
-        adjustedCrowdLevel = Math.max(0, option.crowdLevel - (occupancyFactor * 10));
+        // Less sensitive for alternative transport options
+        adjustedCrowdLevel = Math.max(0, option.crowdLevel - (occupancyFactor * 15));
       }
       
       newCrowdLevels[option.id] = Math.round(adjustedCrowdLevel);
@@ -90,6 +94,11 @@ const TransportationSection: React.FC<TransportationSectionProps> = ({ transport
     
     // Update the last occupancy reference
     lastOccupancyRef.current = aitriosStats.occupancyPercentage;
+    
+    // Log occupancy changes for debugging
+    if (aitriosStats.occupancyPercentage !== lastOccupancyRef.current) {
+      console.log('TransportationSection: Occupancy changed to', aitriosStats.occupancyPercentage);
+    }
     
     return newCrowdLevels;
   }, [aitriosStats.occupancyPercentage, baseOptions]);
@@ -113,6 +122,7 @@ const TransportationSection: React.FC<TransportationSectionProps> = ({ transport
         <h3 className="text-xl font-bold text-white mb-2">Transportation Options</h3>
         <p className="text-white/70">
           Find the best route based on current crowd levels
+          {aitriosLoading ? ' (Updating...)' : ` (Last updated: ${aitriosStats.lastUpdate})`}
         </p>
       </div>
       
@@ -166,8 +176,19 @@ const TransportationSection: React.FC<TransportationSectionProps> = ({ transport
                           : 'bg-red-500'
                       }`}
                       initial={{ width: 0 }}
-                      animate={{ width: `${crowdLevel}%` }}
-                      transition={{ duration: 0.5, ease: "easeOut" }}
+                      animate={{ 
+                        width: `${crowdLevel}%`,
+                        backgroundColor: 
+                          crowdLevel <= 30 ? 'rgb(34, 197, 94)' : // green-500
+                          crowdLevel <= 70 ? 'rgb(234, 179, 8)' : // yellow-500
+                          'rgb(239, 68, 68)' // red-500
+                      }}
+                      transition={{ 
+                        duration: 0.3, 
+                        ease: "easeOut",
+                        type: "spring",
+                        stiffness: 300
+                      }}
                       key={`progress-${option.id}-${crowdLevel}`}
                     />
                   </div>

@@ -298,6 +298,9 @@ const BusinessDashboard = () => {
 
   useEffect(() => {
     if (aitriosStats && businessData) {
+      // Log occupancy changes for debugging
+      console.log('BusinessDashboard: Occupancy updated', aitriosStats.occupancyPercentage);
+      
       setBusinessData({
         ...businessData,
         currentOccupancy: aitriosStats.currentOccupancy,

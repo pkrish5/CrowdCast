@@ -398,6 +398,9 @@ const UserDashboard = () => {
   // Update business data with real-time occupancy
   useEffect(() => {
     if (selectedBusiness && aitriosStats) {
+      // Log occupancy changes for debugging
+      console.log('UserDashboard: Occupancy updated', aitriosStats.occupancyPercentage);
+      
       setBusinesses(prevBusinesses => 
         prevBusinesses.map(business => 
           business.id === selectedBusiness.id
@@ -888,6 +891,7 @@ const UserDashboard = () => {
                     className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-blue-600 bg-blue-200"
                     animate={{ scale: [1, 1.1, 1] }}
                     transition={{ duration: 0.3 }}
+                    key={`occupancy-${aitriosStats.occupancyPercentage}`}
                   >
                     {aitriosStats.occupancyPercentage}% Occupied
                   </motion.span>
@@ -900,6 +904,7 @@ const UserDashboard = () => {
                     }`}
                     animate={{ scale: [1, 1.1, 1] }}
                     transition={{ duration: 0.3 }}
+                    key={`status-${aitriosStats.status}`}
                   >
                     {aitriosStats.status === 'normal' ? 'Normal' : 
                      aitriosStats.status === 'warning' ? 'Warning' : 'Critical'}
@@ -913,14 +918,29 @@ const UserDashboard = () => {
                     aitriosStats.status === 'normal' ? 'bg-green-500' :
                     aitriosStats.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
                   }`}
-                  animate={{ width: `${aitriosStats.occupancyPercentage}%` }}
-                  transition={{ duration: 0.5, ease: "easeOut" }}
+                  animate={{ 
+                    width: `${aitriosStats.occupancyPercentage}%`,
+                    backgroundColor: 
+                      aitriosStats.status === 'normal' ? 'rgb(34, 197, 94)' : // green-500
+                      aitriosStats.status === 'warning' ? 'rgb(234, 179, 8)' : // yellow-500
+                      'rgb(239, 68, 68)' // red-500
+                  }}
+                  transition={{ 
+                    duration: 0.3, 
+                    ease: "easeOut",
+                    type: "spring",
+                    stiffness: 300
+                  }}
+                  key={`progress-${aitriosStats.occupancyPercentage}`}
                 />
               </div>
             </div>
             
-            <div className="text-sm text-white/70">
-              Last updated: {aitriosStats.lastUpdate}
+            <div className="text-sm text-white/70 flex items-center">
+              <span>Last updated: {aitriosStats.lastUpdate}</span>
+              {aitriosLoading && (
+                <span className="ml-2 text-xs text-blue-400 animate-pulse">Updating...</span>
+              )}
             </div>
           </div>
         </motion.div>

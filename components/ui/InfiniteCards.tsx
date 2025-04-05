@@ -1,7 +1,8 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import React, { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 
 export const InfiniteMovingCards = ({
   items,
@@ -20,119 +21,167 @@ export const InfiniteMovingCards = ({
   pauseOnHover?: boolean;
   className?: string;
 }) => {
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const scrollerRef = React.useRef<HTMLUListElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isAnimating, setIsAnimating] = useState(false);
 
+  // Calculate animation duration based on speed
+  const getDuration = () => {
+    switch (speed) {
+      case "fast":
+        return 5000;
+      case "normal":
+        return 7000;
+      case "slow":
+        return 10000;
+      default:
+        return 7000;
+    }
+  };
+
+  // Handle automatic rotation
   useEffect(() => {
-    addAnimation();
-  }, []);
-  const [start, setStart] = useState(false);
-  function addAnimation() {
-    if (containerRef.current && scrollerRef.current) {
-      const scrollerContent = Array.from(scrollerRef.current.children);
+    if (isHovered || !pauseOnHover) return;
 
-      scrollerContent.forEach((item) => {
-        const duplicatedItem = item.cloneNode(true);
-        if (scrollerRef.current) {
-          scrollerRef.current.appendChild(duplicatedItem);
-        }
-      });
+    const interval = setInterval(() => {
+      if (!isAnimating) {
+        setIsAnimating(true);
+        setCurrentIndex((prev) => (prev + 1) % items.length);
+        
+        // Reset animation state after transition
+        setTimeout(() => {
+          setIsAnimating(false);
+        }, 1000);
+      }
+    }, getDuration());
 
-      getDirection();
-      getSpeed();
-      setStart(true);
-    }
-  }
-  const getDirection = () => {
-    if (containerRef.current) {
-      if (direction === "left") {
-        containerRef.current.style.setProperty(
-          "--animation-direction",
-          "forwards"
-        );
-      } else {
-        containerRef.current.style.setProperty(
-          "--animation-direction",
-          "reverse"
-        );
-      }
-    }
+    return () => clearInterval(interval);
+  }, [isHovered, items.length, pauseOnHover, speed, isAnimating]);
+
+  // Handle manual navigation
+  const goToNext = () => {
+    if (isAnimating) return;
+    setIsAnimating(true);
+    setCurrentIndex((prev) => (prev + 1) % items.length);
+    
+    setTimeout(() => {
+      setIsAnimating(false);
+    }, 1000);
   };
-  const getSpeed = () => {
-    if (containerRef.current) {
-      if (speed === "fast") {
-        containerRef.current.style.setProperty("--animation-duration", "20s");
-      } else if (speed === "normal") {
-        containerRef.current.style.setProperty("--animation-duration", "40s");
-      } else {
-        containerRef.current.style.setProperty("--animation-duration", "80s");
-      }
-    }
+
+  const goToPrev = () => {
+    if (isAnimating) return;
+    setIsAnimating(true);
+    setCurrentIndex((prev) => (prev - 1 + items.length) % items.length);
+    
+    setTimeout(() => {
+      setIsAnimating(false);
+    }, 1000);
   };
+
   return (
     <div
       ref={containerRef}
       className={cn(
-        // max-w-7xl to w-screen
-        "scroller relative z-20 w-screen overflow-hidden  [mask-image:linear-gradient(to_right,transparent,white_20%,white_80%,transparent)]",
+        "relative w-full overflow-hidden rounded-xl",
         className
       )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      <ul
-        ref={scrollerRef}
-        className={cn(
-          // change gap-16
-          " flex min-w-full shrink-0 gap-16 py-4 w-max flex-nowrap",
-          start && "animate-scroll ",
-          pauseOnHover && "hover:[animation-play-state:paused]"
-        )}
-      >
+      {/* Gradient mask for fade effect */}
+      <div className="absolute inset-0 z-10 pointer-events-none bg-gradient-to-r from-black/80 via-transparent to-black/80" />
+      
+      {/* Testimonial cards */}
+      <div className="relative h-[300px] flex items-center justify-center">
         {items.map((item, idx) => (
-          <li
-            //   change md:w-[450px] to md:w-[60vw] , px-8 py-6 to p-16, border-slate-700 to border-slate-800
-            className="w-[90vw] max-w-full relative rounded-2xl border border-b-0
-             flex-shrink-0 border-slate-800 p-5 md:p-16 md:w-[60vw]"
-            style={{
-              //   background:
-              //     "linear-gradient(180deg, var(--slate-800), var(--slate-900)", //remove this one
-              //   add these two
-              //   you can generate the color from here https://cssgradient.io/
-              background: "rgb(4,7,29)",
-              backgroundColor:
-                "linear-gradient(90deg, rgba(4,7,29,1) 0%, rgba(12,14,35,1) 100%)",
-            }}
-            // change to idx cuz we have the same name
+          <motion.div
             key={idx}
+            className="absolute w-[80vw] max-w-4xl mx-auto"
+            initial={{ 
+              opacity: 0, 
+              x: idx === currentIndex ? 0 : (direction === "left" ? 100 : -100),
+              scale: 0.9
+            }}
+            animate={{ 
+              opacity: idx === currentIndex ? 1 : 0,
+              x: idx === currentIndex ? 0 : (direction === "left" ? -100 : 100),
+              scale: idx === currentIndex ? 1 : 0.9,
+              transition: { duration: 0.5, ease: "easeOut" }
+            }}
+            style={{ zIndex: idx === currentIndex ? 20 : 10 }}
           >
-            <blockquote>
-              <div
-                aria-hidden="true"
-                className="user-select-none -z-1 pointer-events-none absolute -left-0.5 -top-0.5 h-[calc(100%_+_4px)] w-[calc(100%_+_4px)]"
-              ></div>
-              {/* change text color, text-lg */}
-              <span className=" relative z-20 text-sm md:text-lg leading-[1.6] text-white font-normal">
-                {item.quote}
-              </span>
-              <div className="relative z-20 mt-6 flex flex-row items-center">
-                {/* add this div for the profile img */}
-                <div className="me-3">
-                  <img src="/profile.svg" alt="profile" />
+            <div className="bg-gradient-to-br from-pink-500/10 to-purple-500/10 rounded-2xl border border-white/10 p-6 shadow-xl">
+              <div className="relative">
+                <div className="absolute -top-3 -left-3 text-3xl text-pink-300/30">"</div>
+                <div className="absolute -bottom-3 -right-3 text-3xl text-cyan-300/30">"</div>
+                
+                <p className="text-base md:text-lg lg:text-xl text-white/90 leading-relaxed mb-4">
+                  {item.quote}
+                </p>
+                
+                <div className="flex items-center mt-4 pt-3 border-t border-white/10">
+                  <div className="flex flex-col">
+                    <span className="text-base font-bold text-white">
+                      {item.name}
+                    </span>
+                    <span className="text-sm text-white/60">
+                      {item.title}
+                    </span>
+                  </div>
                 </div>
-                <span className="flex flex-col gap-1">
-                  {/* change text color, font-normal to font-bold, text-xl */}
-                  <span className="text-xl font-bold leading-[1.6] text-white">
-                    {item.name}
-                  </span>
-                  {/* change text color */}
-                  <span className=" text-sm leading-[1.6] text-white-200 font-normal">
-                    {item.title}
-                  </span>
-                </span>
               </div>
-            </blockquote>
-          </li>
+            </div>
+          </motion.div>
         ))}
-      </ul>
+      </div>
+      
+      {/* Navigation arrows */}
+      <div className="absolute inset-y-0 left-0 right-0 flex items-center justify-between px-4 z-30">
+        <button 
+          onClick={goToPrev}
+          className="bg-white/10 hover:bg-white/20 text-white rounded-full p-2 backdrop-blur-sm transition-all"
+          aria-label="Previous testimonial"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        
+        <button 
+          onClick={goToNext}
+          className="bg-white/10 hover:bg-white/20 text-white rounded-full p-2 backdrop-blur-sm transition-all"
+          aria-label="Next testimonial"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+      
+      {/* Indicators */}
+      <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 z-30">
+        {items.map((_, idx) => (
+          <button
+            key={idx}
+            onClick={() => {
+              if (isAnimating) return;
+              setIsAnimating(true);
+              setCurrentIndex(idx);
+              setTimeout(() => {
+                setIsAnimating(false);
+              }, 1000);
+            }}
+            className={`w-2 h-2 rounded-full transition-all ${
+              idx === currentIndex 
+                ? "bg-gradient-to-r from-pink-500 to-cyan-500 w-4" 
+                : "bg-white/30 hover:bg-white/50"
+            }`}
+            aria-label={`Go to testimonial ${idx + 1}`}
+          />
+        ))}
+      </div>
     </div>
   );
 };

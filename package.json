@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "deploy": "vercel --prod"
+    "deploy": "vercel --prod",
+    "init-db": "ts-node --project scripts/tsconfig.json scripts/run-init-db.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.105.4",
@@ -17,6 +18,9 @@
     "@types/three": "^0.163.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
+    "dotenv": "^16.4.7",
+    "firebase": "^11.6.0",
+    "firebase-admin": "^13.2.0",
     "framer-motion": "^11.0.25",
     "lucide-react": "^0.365.0",
     "mini-svg-data-uri": "^1.4.4",
@@ -25,6 +29,7 @@
     "react": "^18",
     "react-dom": "^18",
     "react-icons": "^5.0.1",
+    "react-intersection-observer": "^9.16.0",
     "react-lottie": "^1.2.4",
     "tailwind-merge": "^2.2.2",
     "tailwindcss-animate": "^1.0.7",
@@ -42,6 +47,7 @@
     "eslint-config-next": "14.1.4",
     "postcss": "^8",
     "tailwindcss": "^3.3.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5"
   }
 }

@@ -1,16 +1,89 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { IoCopyOutline } from "react-icons/io5";
+import { motion } from "framer-motion";
 
 // Also install this npm i --save-dev @types/react-lottie
 import Lottie from "react-lottie";
 
 import { cn } from "@/lib/utils";
 
-
 import { BackgroundGradientAnimation } from "./GradientBg";
 import GridGlobe from "./GridGlobe";
 import animationData from "@/data/confetti.json";
 import MagicButton from "../MagicButton";
+
+// Waveform animation component
+const WaveformAnimation = ({ color }: { color: string }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Set canvas size
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+    
+    // Animation variables
+    let animationFrameId: number;
+    const waves: { x: number; amplitude: number; frequency: number; speed: number }[] = [];
+    
+    // Create multiple waves with different properties
+    for (let i = 0; i < 3; i++) {
+      waves.push({
+        x: 0,
+        amplitude: Math.random() * 20 + 10,
+        frequency: Math.random() * 0.02 + 0.01,
+        speed: Math.random() * 0.02 + 0.01
+      });
+    }
+    
+    // Animation function
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw each wave
+      waves.forEach((wave, index) => {
+        ctx.beginPath();
+        ctx.strokeStyle = `${color}${Math.floor(80 - index * 20)}`;
+        ctx.lineWidth = 2;
+        
+        for (let x = 0; x < canvas.width; x++) {
+          const y = canvas.height / 2 + 
+            Math.sin(x * wave.frequency + wave.x) * wave.amplitude;
+          
+          if (x === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        
+        ctx.stroke();
+        wave.x += wave.speed;
+      });
+      
+      animationFrameId = requestAnimationFrame(animate);
+    };
+    
+    animate();
+    
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [color]);
+  
+  return (
+    <canvas 
+      ref={canvasRef} 
+      className="absolute inset-0 w-full h-full opacity-30"
+      style={{ pointerEvents: 'none' }}
+    />
+  );
+};
 
 export const BentoGrid = ({
   className,
@@ -23,7 +96,7 @@ export const BentoGrid = ({
     <div
       className={cn(
         // change gap-4 to gap-8, change grid-cols-3 to grid-cols-5, remove md:auto-rows-[18rem], add responsive code
-        "grid grid-cols-1 md:grid-cols-6 lg:grid-cols-5 md:grid-row-7 gap-4 lg:gap-8 mx-auto",
+        "grid grid-cols-1 md:grid-cols-6 lg:grid-cols-5 md:grid-row-7 gap-4 lg:gap-6 mx-auto",
         className
       )}
     >
@@ -72,11 +145,32 @@ export const BentoGridItem = ({
     setCopied(true);
   };
 
+  // Determine border color based on id
+  const getBorderColor = () => {
+    const colors = [
+      "from-pink-300 to-purple-300",
+      "from-cyan-300 to-blue-300",
+      "from-purple-300 to-pink-300",
+      "from-blue-300 to-cyan-300",
+      "from-pink-300 to-blue-300",
+      "from-cyan-300 to-purple-300"
+    ];
+    return colors[id % colors.length];
+  };
+
   return (
-    <div
+    <motion.div
+      whileHover={{ 
+        scale: 1.03,
+        transition: { 
+          type: "spring", 
+          stiffness: 400, 
+          damping: 10 
+        }
+      }}
       className={cn(
         // remove p-4 rounded-3xl dark:bg-black dark:border-white/[0.2] bg-white  border border-transparent, add border border-white/[0.1] overflow-hidden relative
-        "row-span-1 relative overflow-hidden rounded-3xl border border-white/[0.1] group/bento hover:shadow-xl transition duration-200 shadow-input dark:shadow-none justify-between flex flex-col space-y-4",
+        "row-span-1 relative overflow-hidden rounded-3xl group/bento hover:shadow-xl transition duration-200 shadow-input dark:shadow-none justify-between flex flex-col space-y-2",
         className
       )}
       style={{
@@ -87,8 +181,19 @@ export const BentoGridItem = ({
           "linear-gradient(90deg, rgba(4,7,29,1) 0%, rgba(12,14,35,1) 100%)",
       }}
     >
-      {/* add img divs */}
-      <div className={`${id === 6 && "flex justify-center"} h-full`}>
+      {/* Border gradient */}
+      <div className={`absolute inset-0 rounded-3xl bg-gradient-to-r ${getBorderColor()} opacity-20 group-hover/bento:opacity-40 transition-opacity duration-300`} />
+      
+      {/* Waveform animations */}
+      <div className="absolute left-0 top-0 w-1/4 h-full">
+        <WaveformAnimation color="#ec4899" /> {/* Pink */}
+      </div>
+      <div className="absolute right-0 top-0 w-1/4 h-full">
+        <WaveformAnimation color="#06b6d4" /> {/* Cyan */}
+      </div>
+      
+      {/* Content */}
+      <div className={`${id === 6 && "flex justify-center"} h-full relative z-10`}>
         <div className="w-full h-full absolute">
           {img && (
             <img
@@ -121,7 +226,7 @@ export const BentoGridItem = ({
         <div
           className={cn(
             titleClassName,
-            "group-hover/bento:translate-x-2 transition duration-200 relative md:h-full min-h-40 flex flex-col px-5 p-5 lg:p-10"
+            "group-hover/bento:translate-x-2 transition duration-200 relative md:h-full min-h-40 flex flex-col px-4 p-4 lg:p-6"
           )}
         >
           {/* change the order of the title and des, font-extralight, remove text-xs text-neutral-600 dark:text-neutral-300 , change the text-color */}
@@ -194,6 +299,6 @@ export const BentoGridItem = ({
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };

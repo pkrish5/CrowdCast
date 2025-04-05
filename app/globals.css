@@ -70,9 +70,11 @@
   * {
     @apply border-border !scroll-smooth;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+
   button {
     @apply active:outline-none;
   }
@@ -82,4 +84,126 @@
   .heading {
     @apply font-bold text-4xl md:text-5xl text-center;
   }
+
+  /* New theme color variables */
+  .text-pink-300 {
+    @apply text-[#ff8fb1];
+  }
+
+  .text-cyan-300 {
+    @apply text-[#7ee7ff];
+  }
+
+  .bg-pink-300 {
+    @apply bg-[#ff8fb1];
+  }
+
+  .bg-cyan-300 {
+    @apply bg-[#7ee7ff];
+  }
+
+  .from-pink-300 {
+    @apply from-[#ff8fb1];
+  }
+
+  .to-cyan-300 {
+    @apply to-[#7ee7ff];
+  }
+
+  .border-pink-300 {
+    @apply border-[#ff8fb1];
+  }
+
+  .border-cyan-300 {
+    @apply border-[#7ee7ff];
+  }
+
+  .text-purple {
+    @apply text-[#b794f4];
+  }
+
+  .bg-purple {
+    @apply bg-[#b794f4];
+  }
+
+  .from-purple {
+    @apply from-[#b794f4];
+  }
+
+  .to-purple {
+    @apply to-[#b794f4];
+  }
+
+  .border-purple {
+    @apply border-[#b794f4];
+  }
+
+  .text-blue {
+    @apply text-[#63b3ed];
+  }
+
+  .bg-blue {
+    @apply bg-[#63b3ed];
+  }
+
+  .from-blue {
+    @apply from-[#63b3ed];
+  }
+
+  .to-blue {
+    @apply to-[#63b3ed];
+  }
+
+  .border-blue {
+    @apply border-[#63b3ed];
+  }
+}
+
+@keyframes blob {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+.animate-blob {
+  animation: blob 7s infinite;
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
+}
+
+@keyframes gradient-xy {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-gradient-xy {
+  background-size: 400% 400%;
+  animation: gradient-xy 15s ease infinite;
 }
